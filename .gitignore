@@ -1,0 +1,12 @@
+.next/
+node_modules/
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+.DS_Store
+.env
+.env.local
+.env.*.local
+Contacts for database.xlsx
+exports/*.csv
