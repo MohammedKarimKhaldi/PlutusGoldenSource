@@ -1,88 +1,68 @@
 import Link from "next/link";
 import { Building2, CircleDot, FileSpreadsheet, ListChecks, Tags, UsersRound } from "lucide-react";
 
-import { getDashboardData } from "@/lib/data";
-
 const menuItems = [
   {
     href: "/companies?view=companies",
     label: "Companies",
     icon: Building2,
-    metric: "companies" as const,
+    tone: "blue",
   },
   {
     href: "/companies?view=people",
     label: "People",
     icon: UsersRound,
-    metric: "people" as const,
+    tone: "teal",
   },
   {
     href: "/companies?view=tags",
     label: "Tags",
     icon: Tags,
-    metric: "tags" as const,
+    tone: "violet",
   },
   {
     href: "/companies?view=pipeline",
     label: "Pipeline",
     icon: CircleDot,
-    metric: "pipeline" as const,
+    tone: "green",
   },
   {
     href: "/companies?view=tasks",
     label: "Tasks",
     icon: ListChecks,
-    metric: "tasks" as const,
+    tone: "amber",
   },
   {
     href: "/companies?view=import",
     label: "Import Admin",
     icon: FileSpreadsheet,
-    metric: "import" as const,
+    tone: "slate",
   },
 ];
 
-function formatNumber(value: number) {
-  return new Intl.NumberFormat("en-US").format(value);
-}
-
-export default async function Home() {
-  const data = await getDashboardData();
-  const metrics = {
-    companies: data.companies.length || data.importSummary.normalizedCompanies,
-    people: data.importSummary.normalizedPeople,
-    tags: data.tags.length,
-    pipeline: data.companies.filter((company) => company.outreachStage !== "Closed").length,
-    tasks: data.tasks.length,
-    import: data.importSummary.rawRows || data.importSummary.totalRows,
-  };
-
+export default function Home() {
   return (
     <main className="main-menu-page">
       <section className="main-menu-shell" aria-labelledby="main-menu-title">
         <header className="main-menu-header">
-          <div>
-            <p className="eyebrow">Golden Source CRM</p>
+          <Link className="main-menu-brand" href="/companies?view=companies" aria-label="Open Golden Source CRM companies">
+            <span>GS</span>
+            <strong>Golden Source CRM</strong>
+          </Link>
+          <div className="main-menu-title">
             <h1 id="main-menu-title">Main menu</h1>
           </div>
-          <Link className="primary-button" href="/companies?view=companies">
-            <Building2 size={16} />
-            Open CRM
-          </Link>
         </header>
 
         <div className="main-menu-grid">
           {menuItems.map((item) => {
             const Icon = item.icon;
             return (
-              <Link key={item.href} className="main-menu-item" href={item.href}>
+              <Link key={item.href} className={`main-menu-item ${item.tone}`} href={item.href}>
                 <span className="main-menu-icon">
                   <Icon size={20} />
                 </span>
-                <span className="main-menu-copy">
-                  <strong>{item.label}</strong>
-                  <span>{formatNumber(metrics[item.metric])}</span>
-                </span>
+                <strong>{item.label}</strong>
               </Link>
             );
           })}
