@@ -9,10 +9,12 @@ import { applyCompanyEnrichmentTags } from "@/lib/enrichment/company-tags";
 import { normalizeCompanyName, normalizePersonName } from "@/lib/import/normalization";
 import { buildPersonEmailUpdateRows, normalizePersonCategories } from "@/lib/person-update";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
+import type { InvestmentDealStatus } from "@/lib/types";
 import {
   activitySchema,
   companyEnrichmentUpdateSchema,
   companyUpdateSchema,
+  investmentDealStatusUpdateSchema,
   highlightSchema,
   investmentDealSchema,
   investmentRelationshipSchema,
@@ -94,6 +96,10 @@ type CompanyMergeOutreachRow = {
   owner_id: string | null;
   next_step: string | null;
 };
+type InvestmentDealStatusRow = {
+  name: string;
+  status: InvestmentDealStatus;
+};
 
 const WRITE_CHUNK_SIZE = 500;
 const PERSON_UPDATE_CONCURRENCY = 25;
@@ -102,6 +108,12 @@ const SOURCE_QUALITY_RANK: Record<CompanyMergeCompanyRow["source_quality"], numb
   low: 1,
   medium: 2,
   high: 3,
+};
+const INVESTMENT_DEAL_STATUS_LABELS: Record<InvestmentDealStatus, string> = {
+  prospective: "Prospective",
+  active: "Active",
+  closed: "Closed",
+  passed: "Passed",
 };
 
 function unavailable(): ActionResult {
@@ -407,7 +419,7 @@ export async function signInWithEmail(formData: FormData) {
     redirect("/login?error=invalid_credentials");
   }
 
-  redirect("/companies?auth=success");
+  redirect("/");
 }
 
 export async function signOut() {
@@ -699,6 +711,60 @@ export async function addInvestmentDealAction(input: unknown): Promise<ActionRes
   if (participantError) return { ok: false, message: participantError.message };
   await revalidateDashboard();
   return { ok: true, message: "Investment deal added." };
+}
+
+export async function updateInvestmentDealStatusAction(input: unknown): Promise<ActionResult> {
+  const parsed = investmentDealStatusUpdateSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid investment deal status update." };
+
+  const supabase = createSupabaseAdminClient();
+  if (!supabase) return unavailable();
+
+  const { organizationId, companyId, dealId, status } = parsed.data;
+  const note = parsed.data.note?.trim() || null;
+  const now = new Date().toISOString();
+
+  const { data: existingDeal, error: existingDealError } = await supabase
+    .from("investment_deals")
+    .select("name,status")
+    .eq("organization_id", organizationId)
+    .eq("id", dealId)
+    .maybeSingle();
+
+  if (existingDealError) return { ok: false, message: existingDealError.message };
+  if (!existingDeal) return { ok: false, message: "Could not find this deal in the selected organization." };
+
+  const currentDeal = existingDeal as InvestmentDealStatusRow;
+  const { error: updateError } = await supabase
+    .from("investment_deals")
+    .update({
+      status,
+      updated_at: now,
+    })
+    .eq("organization_id", organizationId)
+    .eq("id", dealId);
+
+  if (updateError) return { ok: false, message: updateError.message };
+
+  const summary =
+    currentDeal.status === status
+      ? `Investment deal "${currentDeal.name}" status update: ${INVESTMENT_DEAL_STATUS_LABELS[status]}.`
+      : `Investment deal "${currentDeal.name}" changed from ${INVESTMENT_DEAL_STATUS_LABELS[currentDeal.status]} to ${INVESTMENT_DEAL_STATUS_LABELS[status]}.`;
+
+  const { error: activityError } = await supabase.from("activities").insert({
+    organization_id: organizationId,
+    company_id: companyId,
+    person_id: null,
+    outreach_id: null,
+    activity_type: "status_change",
+    summary,
+    body: note,
+    occurred_at: now,
+  });
+
+  if (activityError) return { ok: false, message: activityError.message };
+  await revalidateDashboard();
+  return { ok: true, message: "Deal status updated." };
 }
 
 export async function addNoteAction(input: unknown): Promise<ActionResult> {

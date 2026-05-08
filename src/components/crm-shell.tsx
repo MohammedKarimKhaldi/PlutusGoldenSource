@@ -45,11 +45,13 @@ import {
   signOut,
   updateCompanyAction,
   updateCompanyEnrichmentAction,
+  updateInvestmentDealStatusAction,
   updateInvestmentRelationshipAction,
   updatePeopleAction,
   updatePersonAction,
 } from "@/app/actions";
 import { normalizeCompanyWebsites } from "@/lib/company-websites";
+import { buildDealPipelineRows, groupDealPipelineRows, type DealPipelineRow } from "@/lib/deal-pipeline";
 import { DEFAULT_COMPANY_TAG_COLOR } from "@/lib/enrichment/company-tags";
 import {
   CONTACT_EXPORT_LABELS,
@@ -175,6 +177,12 @@ type PendingChangeRecord =
       };
     }
   | {
+      kind: "investment-deal-status";
+      key: string;
+      label: string;
+      payload: Record<string, unknown>;
+    }
+  | {
       kind: "company-tag-rename";
       key: string;
       label: string;
@@ -250,6 +258,10 @@ type InvestmentDraft = {
   dealRole: string;
   dealNotes: string;
 };
+type PipelineStatusDraft = {
+  status: InvestmentDealStatus;
+  note: string;
+};
 type EnrichmentBatchProgress = {
   total: number;
   completed: number;
@@ -302,7 +314,6 @@ const VIEW_TITLES: Record<ActiveView, string> = {
 
 const COMPANY_PAGE_SIZE_OPTIONS = [50, 100, 250, 500, "all"] as const;
 const PEOPLE_PAGE_SIZE_OPTIONS = [50, 100, 250, 500, 1000, "all"] as const;
-const PIPELINE_COLUMN_LIMIT = 60;
 const PUSH_BATCH_SIZE = 100;
 const DEBUG_DRAFT_VERSION = 1;
 const DEBUG_MODE_STORAGE_KEY = "golden-source-debug-mode";
@@ -339,6 +350,12 @@ function formatNumber(value: number) {
 
 function formatChangeCount(count: number) {
   return `${formatNumber(count)} pending change${count === 1 ? "" : "s"}`;
+}
+
+function formatDealStatusSummary(dealName: string, fromStatus: InvestmentDealStatus, toStatus: InvestmentDealStatus) {
+  return fromStatus === toStatus
+    ? `Investment deal "${dealName}" status update: ${INVESTMENT_DEAL_STATUS_LABELS[toStatus]}.`
+    : `Investment deal "${dealName}" changed from ${INVESTMENT_DEAL_STATUS_LABELS[fromStatus]} to ${INVESTMENT_DEAL_STATUS_LABELS[toStatus]}.`;
 }
 
 function formatCompanyWebsites(company: Company) {
@@ -471,6 +488,29 @@ function exportCompanies(companies: Company[]) {
   const link = document.createElement("a");
   link.href = url;
   link.download = "golden-source-companies.csv";
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportDealPipeline(rows: DealPipelineRow[]) {
+  const header = ["Company", "Deal", "Deal status", "Company outreach stage", "Linked contacts", "Role", "Date", "Deal notes", "Relationship notes"];
+  const csvRows = rows.map((row) => [
+    row.companyName,
+    row.dealName,
+    INVESTMENT_DEAL_STATUS_LABELS[row.status],
+    row.outreachStage,
+    row.contacts.join("; "),
+    row.roles.join("; "),
+    row.investedAt ?? "",
+    row.dealNotes.join("; "),
+    row.relationshipNotes.join("; "),
+  ]);
+  const csv = [header, ...csvRows].map((row) => row.map(csvEscape).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "golden-source-deal-pipeline.csv";
   link.click();
   URL.revokeObjectURL(url);
 }
@@ -947,6 +987,7 @@ export function CrmShell({
   const [personEditMessage, setPersonEditMessage] = useState<string | null>(null);
   const [bulkTag, setBulkTag] = useState("");
   const [noteText, setNoteText] = useState("");
+  const [pipelineDrafts, setPipelineDrafts] = useState<Record<string, PipelineStatusDraft>>({});
   const [pendingChanges, setPendingChanges] = useState<PendingChange[]>([]);
   const [isPushingChanges, setIsPushingChanges] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
@@ -1127,22 +1168,8 @@ export function CrmShell({
       ),
     [companies],
   );
-  const pipelineGroups = useMemo(
-    () => {
-      const groups = new Map<OutreachStage, Company[]>(OUTREACH_STAGES.map((stageName) => [stageName, []]));
-      companies.forEach((company) => groups.get(company.outreachStage)?.push(company));
-
-      return OUTREACH_STAGES.map((stageName) => {
-        const stageCompanies = groups.get(stageName) ?? [];
-        return {
-          stage: stageName,
-          companies: stageCompanies.slice(0, PIPELINE_COLUMN_LIMIT),
-          total: stageCompanies.length,
-        };
-      });
-    },
-    [companies],
-  );
+  const dealPipelineRows = useMemo(() => buildDealPipelineRows(companies), [companies]);
+  const dealPipelineGroups = useMemo(() => groupDealPipelineRows(dealPipelineRows), [dealPipelineRows]);
 
   const buildPendingChange = useCallback((record: PendingChangeRecord): PendingChange => {
     switch (record.kind) {
@@ -1231,6 +1258,16 @@ export function CrmShell({
           run: () =>
             initialData.authMode === "supabase"
               ? addInvestmentDealAction(record.payload)
+              : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
+        };
+      case "investment-deal-status":
+        return {
+          key: record.key,
+          label: record.label,
+          record,
+          run: () =>
+            initialData.authMode === "supabase"
+              ? updateInvestmentDealStatusAction(record.payload)
               : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
         };
       case "company-tag-rename":
@@ -1549,6 +1586,7 @@ export function CrmShell({
     setEnrichmentDraft(null);
     setCompanyInvestmentDraft(null);
     setPersonInvestmentDraft(null);
+    setPipelineDrafts({});
     setEnrichmentMessage(null);
     setTagDrafts({});
     setPeopleMessage(null);
@@ -2134,6 +2172,34 @@ export function CrmShell({
     }));
   }
 
+  function updateDealStatusInRelationships(relationships: InvestmentRelationship[], dealId: string, status: InvestmentDealStatus) {
+    return relationships.map((relationship) => ({
+      ...relationship,
+      deals: relationship.deals.map((deal) => (deal.id === dealId ? { ...deal, status } : deal)),
+    }));
+  }
+
+  function updateInvestmentDealStatusLocally(companyId: string, dealId: string, status: InvestmentDealStatus, summary: string) {
+    const now = new Date().toISOString();
+    const activityId = `local-status-${companyId}-${dealId}`;
+    updateCompanies((company) => ({
+      ...company,
+      investmentRelationships: updateDealStatusInRelationships(company.investmentRelationships, dealId, status),
+      people: company.people.map((person) => ({
+        ...person,
+        investmentRelationships: updateDealStatusInRelationships(person.investmentRelationships, dealId, status),
+      })),
+      activities:
+        company.id === companyId
+          ? [
+              { id: activityId, type: "status_change", summary, occurredAt: now },
+              ...company.activities.filter((activity) => activity.id !== activityId),
+            ]
+          : company.activities,
+      lastActivityAt: company.id === companyId ? now : company.lastActivityAt,
+    }));
+  }
+
   function saveInvestmentRelationship(relationship: InvestmentRelationship, draft: InvestmentDraft, label: string) {
     const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
     const nextRelationship: InvestmentRelationship = {
@@ -2237,6 +2303,55 @@ export function CrmShell({
         initialData.authMode === "supabase" && organizationId
           ? addInvestmentDealAction(payload)
           : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
+    });
+  }
+
+  function updatePipelineDraft(row: DealPipelineRow, updates: Partial<PipelineStatusDraft>) {
+    setPipelineDrafts((current) => ({
+      ...current,
+      [row.key]: {
+        status: current[row.key]?.status ?? row.status,
+        note: current[row.key]?.note ?? "",
+        ...updates,
+      },
+    }));
+  }
+
+  function queueDealStatusUpdate(row: DealPipelineRow) {
+    const draft = pipelineDrafts[row.key] ?? { status: row.status, note: "" };
+    const note = draft.note.trim();
+    const statusChanged = draft.status !== row.status;
+    if (!statusChanged && !note) return;
+
+    const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
+    const summary = formatDealStatusSummary(row.dealName, row.status, draft.status);
+    const payload = {
+      organizationId: organizationId ?? "",
+      companyId: row.companyId,
+      dealId: row.dealId,
+      status: draft.status,
+      note: note || null,
+    };
+
+    updateInvestmentDealStatusLocally(row.companyId, row.dealId, draft.status, summary);
+    queuePendingChange({
+      key: `investment-deal-status:${row.companyId}:${row.dealId}`,
+      label: "Deal status update",
+      record: {
+        kind: "investment-deal-status",
+        key: `investment-deal-status:${row.companyId}:${row.dealId}`,
+        label: "Deal status update",
+        payload,
+      },
+      run: () =>
+        initialData.authMode === "supabase" && organizationId && isUuid(row.companyId) && isUuid(row.dealId)
+          ? updateInvestmentDealStatusAction(payload)
+          : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
+    });
+    setPipelineDrafts((current) => {
+      const next = { ...current };
+      delete next[row.key];
+      return next;
     });
   }
 
@@ -3676,44 +3791,97 @@ export function CrmShell({
             <div className="surface-header">
               <div>
                 <p className="eyebrow">Pipeline</p>
-                <h2>Company outreach stages</h2>
+                <h2>Deal outreach pipeline</h2>
+                <span>{formatNumber(dealPipelineRows.length)} company-deal work items</span>
               </div>
-              <button type="button" className="secondary-button" onClick={() => exportCompanies(companies)}>
+              <button type="button" className="secondary-button" onClick={() => exportDealPipeline(dealPipelineRows)}>
                 <Download size={15} /> Export pipeline
               </button>
             </div>
             <div className="pipeline-board">
-              {pipelineGroups.map((group) => (
-                <section key={group.stage} className="pipeline-column">
+              {dealPipelineGroups.map((group) => (
+                <section key={group.status} className="pipeline-column">
                   <div className="pipeline-column-header">
-                    <strong>{group.stage}</strong>
+                    <strong>{INVESTMENT_DEAL_STATUS_LABELS[group.status]}</strong>
                     <span>{group.total}</span>
                   </div>
-                  {group.companies.map((company) => (
-                    <button key={company.id} type="button" className="pipeline-card" onClick={() => openCompany(company.id)}>
-                      <strong>{company.name}</strong>
-                      <span>{company.nextTask?.title ?? `${company.people.length} people linked`}</span>
-                      <div className="tag-list">
-                        {company.tags.slice(0, 2).map((item) => (
-                          <span key={item.id} className="tag-chip" style={{ "--tag-color": item.color } as React.CSSProperties}>
-                            {item.name}
+                  {group.rows.map((row) => {
+                    const draft = pipelineDrafts[row.key] ?? { status: row.status, note: "" };
+                    const canQueue = draft.status !== row.status || draft.note.trim().length > 0;
+                    const canPersist = isUuid(row.companyId) && isUuid(row.dealId);
+                    const detailNotes = [...row.dealNotes, ...row.relationshipNotes];
+
+                    return (
+                      <article key={row.key} className="pipeline-card">
+                        <div className="pipeline-card-header">
+                          <div>
+                            <strong>{row.dealName}</strong>
+                            <button type="button" className="text-button compact" onClick={() => openCompany(row.companyId)}>
+                              {row.companyName}
+                            </button>
+                          </div>
+                          <span className={clsx("deal-status-pill", row.status)}>{INVESTMENT_DEAL_STATUS_LABELS[row.status]}</span>
+                        </div>
+                        <div className="pipeline-card-meta">
+                          <span>
+                            <UsersRound size={13} /> {row.contacts.length > 0 ? row.contacts.join(", ") : "No linked contact"}
                           </span>
-                        ))}
-                      </div>
-                    </button>
-                  ))}
-                  {group.total > group.companies.length ? (
-                    <button type="button" className="pipeline-more" onClick={() => {
-                      setStageFilters(new Set([group.stage]));
-                      setCompanyPage(1);
-                      setActiveView("companies");
-                    }}>
-                      View {formatNumber(group.total - group.companies.length)} more
-                    </button>
+                          <span>
+                            <Flag size={13} /> {row.outreachStage}
+                          </span>
+                          <span>
+                            <Activity size={13} /> {row.investedAt ? formatDate(row.investedAt) : "No deal date"}
+                          </span>
+                        </div>
+                        {row.roles.length > 0 ? <p className="pipeline-card-note">Role: {row.roles.join("; ")}</p> : null}
+                        {detailNotes.length > 0 ? <p className="pipeline-card-note">{detailNotes.join(" ")}</p> : null}
+                        <div className="pipeline-status-controls">
+                          <label>
+                            <span>Status</span>
+                            <select
+                              value={draft.status}
+                              onChange={(event) => updatePipelineDraft(row, { status: event.target.value as InvestmentDealStatus })}
+                            >
+                              {INVESTMENT_DEAL_STATUSES.map((status) => (
+                                <option key={status} value={status}>
+                                  {INVESTMENT_DEAL_STATUS_LABELS[status]}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            <span>Update note</span>
+                            <input
+                              value={draft.note}
+                              onChange={(event) => updatePipelineDraft(row, { note: event.target.value })}
+                              placeholder="Optional note"
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            className="primary-button compact"
+                            disabled={!canQueue || !canPersist}
+                            title={canPersist ? "Queue status update" : "Push this deal before changing status"}
+                            onClick={() => queueDealStatusUpdate(row)}
+                          >
+                            <Check size={14} /> Queue
+                          </button>
+                        </div>
+                        {!canPersist ? <span className="pipeline-card-warning">Push this new deal before queueing status updates.</span> : null}
+                      </article>
+                    );
+                  })}
+                  {group.rows.length === 0 ? (
+                    <div className="pipeline-empty">
+                      <span>No deal outreach here yet.</span>
+                    </div>
                   ) : null}
                 </section>
               ))}
             </div>
+            {dealPipelineRows.length === 0 ? (
+              <p className="empty-state">No investment deals are linked to companies or company contacts yet.</p>
+            ) : null}
           </section>
         ) : null}
 

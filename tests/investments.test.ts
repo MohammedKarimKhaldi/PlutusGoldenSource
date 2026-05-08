@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { investmentDealSchema, investmentRelationshipSchema } from "../src/lib/validation";
+import { investmentDealSchema, investmentDealStatusUpdateSchema, investmentRelationshipSchema } from "../src/lib/validation";
 
 const organizationId = "11111111-1111-4111-8111-111111111111";
 const companyId = "22222222-2222-4222-8222-222222222222";
@@ -46,5 +46,28 @@ describe("investment validation", () => {
     });
 
     expect(result.success).toBe(true);
+  });
+
+  it("accepts valid deal status updates", () => {
+    const result = investmentDealStatusUpdateSchema.safeParse({
+      organizationId,
+      companyId,
+      dealId: "44444444-4444-4444-8444-444444444444",
+      status: "active",
+      note: "Intro call completed.",
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects invalid deal status updates", () => {
+    const result = investmentDealStatusUpdateSchema.safeParse({
+      organizationId,
+      companyId: "",
+      dealId: "44444444-4444-4444-8444-444444444444",
+      status: "stuck",
+    });
+
+    expect(result.success).toBe(false);
   });
 });
