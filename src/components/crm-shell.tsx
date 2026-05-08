@@ -62,6 +62,7 @@ import { CAPACITY_STATUSES, INVESTMENT_DEAL_STATUSES, INVESTMENT_STATUSES, OUTRE
 
 type CrmShellProps = {
   initialData: DashboardData;
+  authSuccess?: boolean;
   companyId?: string;
   hideDetailPanel?: boolean;
   hideTable?: boolean;
@@ -874,6 +875,7 @@ function initialCompanyIdFor(companies: Company[], companyId?: string) {
 
 export function CrmShell({
   initialData,
+  authSuccess = false,
   companyId,
   hideDetailPanel = false,
   hideTable = false,
@@ -1276,6 +1278,16 @@ export function CrmShell({
       cancelled = true;
     };
   }, [initialActiveView]);
+
+  useEffect(() => {
+    if (!authSuccess) return;
+
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("auth") !== "success") return;
+
+    url.searchParams.delete("auth");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [authSuccess]);
 
   useEffect(() => {
     const companyIds = new Set(initialData.companies.map((company) => company.id));
@@ -2700,6 +2712,13 @@ export function CrmShell({
             <span>
               {debugStorageIssue ?? "Debug mode is on. Edits and queued changes are saved in this browser until you push them to the database."}
             </span>
+          </div>
+        ) : null}
+
+        {authSuccess && isSignedIn ? (
+          <div className="data-notice success auth-flash" aria-live="polite">
+            <Check size={16} />
+            <span>Signed in successfully.</span>
           </div>
         ) : null}
 

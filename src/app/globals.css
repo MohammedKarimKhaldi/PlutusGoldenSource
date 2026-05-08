@@ -1256,6 +1256,17 @@ h2 {
   background: #fff1f2;
 }
 
+.data-notice.success {
+  border-color: #86efac;
+  color: #166534;
+  background: #f0fdf4;
+}
+
+.auth-flash {
+  max-width: 1500px;
+  margin: 0 auto 12px;
+}
+
 .debug-banner {
   display: inline-flex;
   align-items: center;
@@ -1936,6 +1947,11 @@ button.contact-chip {
   color: var(--accent-ink);
   background: var(--accent);
   font-weight: 800;
+}
+
+.auth-form button:disabled {
+  cursor: progress;
+  opacity: 0.75;
 }
 
 .auth-error {

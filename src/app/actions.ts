@@ -393,20 +393,20 @@ async function updatePeopleInSupabase(updates: PersonUpdateInput[]): Promise<Act
 }
 
 export async function signInWithEmail(formData: FormData) {
-  const email = String(formData.get("email") ?? "");
+  const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
   const supabase = await createSupabaseServerClient();
 
   if (!supabase) {
-    redirect("/");
+    redirect("/login?error=auth_unavailable");
   }
 
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) {
-    redirect(`/login?error=${encodeURIComponent(error.message)}`);
+    redirect("/login?error=invalid_credentials");
   }
 
-  redirect("/");
+  redirect("/companies?auth=success");
 }
 
 export async function signOut() {
