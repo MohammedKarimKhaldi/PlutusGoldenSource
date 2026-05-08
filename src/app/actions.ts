@@ -407,7 +407,7 @@ export async function signInWithEmail(formData: FormData) {
     redirect("/login?error=invalid_credentials");
   }
 
-  redirect("/companies?auth=success");
+  redirect("/");
 }
 
 export async function signOut() {

@@ -45,7 +45,7 @@ export default function Home() {
     <main className="main-menu-page">
       <section className="main-menu-shell" aria-labelledby="main-menu-title">
         <header className="main-menu-header">
-          <Link className="main-menu-brand" href="/companies?view=companies" aria-label="Open Golden Source CRM companies">
+          <Link className="main-menu-brand" href="/companies?view=companies" prefetch={false} aria-label="Open Golden Source CRM companies">
             <span>GS</span>
             <strong>Golden Source CRM</strong>
           </Link>
@@ -58,7 +58,7 @@ export default function Home() {
           {menuItems.map((item) => {
             const Icon = item.icon;
             return (
-              <Link key={item.href} className={`main-menu-item ${item.tone}`} href={item.href}>
+              <Link key={item.href} className={`main-menu-item ${item.tone}`} href={item.href} prefetch={false}>
                 <span className="main-menu-icon">
                   <Icon size={20} />
                 </span>
