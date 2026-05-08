@@ -11,6 +11,7 @@ export const runtime = "nodejs";
 const requestSchema = z.object({
   companyId: z.string().uuid(),
   force: z.boolean().optional().default(false),
+  persist: z.boolean().optional().default(true),
 });
 
 type CompanyRow = {
@@ -81,6 +82,8 @@ export async function POST(request: Request) {
     country: companyRow.country,
     categories: companyRow.categories ?? [],
   });
+
+  if (!parsed.data.persist) return NextResponse.json({ enrichment });
 
   const { error: upsertError } = await adminSupabase.from("company_enrichments").upsert(
     {

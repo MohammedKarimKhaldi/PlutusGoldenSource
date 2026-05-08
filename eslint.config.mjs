@@ -5,6 +5,12 @@ const eslintConfig = [
   ...nextVitals,
   ...nextTs,
   {
+    files: ["src/components/companies-table.tsx"],
+    rules: {
+      "react-hooks/incompatible-library": "off",
+    },
+  },
+  {
     ignores: [".next/**", "node_modules/**", "coverage/**"],
   },
 ];
