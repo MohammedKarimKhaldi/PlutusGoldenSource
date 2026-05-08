@@ -12,6 +12,10 @@ test("renders CRM shell, exports contacts, and queues investment status", async 
   expect(csv).toContain("company_name,company_domain");
   expect(csv).toContain("investment_status,capacity_status,past_deals,current_deals,last_invested_date");
 
+  await expect(page).toHaveURL(/\/companies$/);
+  await expect(page.getByRole("button", { name: "Refresh company table" })).toBeVisible();
+  await page.locator("tbody tr", { hasText: "Morgan Stanley" }).dblclick();
+  await expect(page.getByRole("dialog", { name: "Company details" })).toBeVisible();
   await expect(page.getByText("Investment history")).toBeVisible();
   await page.getByRole("button", { name: /Queue status/ }).click();
   await expect(page.getByText(/pending change/).first()).toBeVisible();

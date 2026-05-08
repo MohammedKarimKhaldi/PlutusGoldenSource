@@ -146,6 +146,13 @@ async function runSupabaseQuery<T>(label: string, query: () => PromiseLike<T>, a
 async function revalidateDashboard() {
   await clearDashboardDataCache();
   revalidatePath("/");
+  revalidatePath("/companies");
+  revalidatePath("/companies/[id]", "page");
+}
+
+export async function refreshDashboardAction(): Promise<ActionResult> {
+  await revalidateDashboard();
+  return { ok: true, message: "Dashboard cache refreshed." };
 }
 
 function chunks<T>(items: T[], size = WRITE_CHUNK_SIZE) {
@@ -592,7 +599,7 @@ export async function updateCompanyEnrichmentAction(input: unknown): Promise<Act
   if (!supabase) return unavailable();
 
   const now = new Date().toISOString();
-  const { organizationId, companyId, reviewed, ...enrichment } = parsed.data;
+  const { organizationId, companyId, generatedAt, reviewed, ...enrichment } = parsed.data;
   const { error } = await supabase.from("company_enrichments").upsert(
     {
       organization_id: organizationId,
@@ -608,6 +615,7 @@ export async function updateCompanyEnrichmentAction(input: unknown): Promise<Act
       model: enrichment.model ?? null,
       confidence: enrichment.confidence ?? null,
       error_message: enrichment.errorMessage ?? null,
+      generated_at: generatedAt ?? now,
       reviewed_at: reviewed ? now : null,
       updated_at: now,
     },

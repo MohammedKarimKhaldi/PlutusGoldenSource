@@ -173,6 +173,7 @@ export const companyEnrichmentUpdateSchema = z.object({
   model: z.string().trim().max(120).nullable().optional(),
   confidence: z.number().min(0).max(1).nullable().optional(),
   errorMessage: z.string().trim().max(2000).nullable().optional(),
+  generatedAt: z.string().datetime().nullable().optional(),
   reviewed: z.boolean().optional().default(true),
 });
 

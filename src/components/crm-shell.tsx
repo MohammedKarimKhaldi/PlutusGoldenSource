@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Activity,
   ArrowDown,
@@ -19,6 +20,7 @@ import {
   Mail,
   Pencil,
   Plus,
+  RefreshCw,
   Search,
   Star,
   Tags,
@@ -39,6 +41,7 @@ import {
   mergePeopleAction,
   moveStageAction,
   renameCompanyTagAction,
+  refreshDashboardAction,
   signOut,
   updateCompanyAction,
   updateCompanyEnrichmentAction,
@@ -59,6 +62,10 @@ import { CAPACITY_STATUSES, INVESTMENT_DEAL_STATUSES, INVESTMENT_STATUSES, OUTRE
 
 type CrmShellProps = {
   initialData: DashboardData;
+  companyId?: string;
+  hideDetailPanel?: boolean;
+  hideTable?: boolean;
+  activeView?: ActiveView;
 };
 
 type ActiveView = "companies" | "people" | "tags" | "pipeline" | "tasks" | "import";
@@ -233,6 +240,15 @@ type InvestmentDraft = {
   dealRole: string;
   dealNotes: string;
 };
+type EnrichmentBatchProgress = {
+  total: number;
+  completed: number;
+  skipped: number;
+  failed: number;
+  currentName: string | null;
+  stopRequested: boolean;
+  stopped: boolean;
+};
 
 const INCORRECT_EMAIL_TAG = "Incorrect email";
 const EMAIL_IN_TEXT_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
@@ -365,13 +381,21 @@ function buildCompanySearchText(company: Company) {
     .toLowerCase();
 }
 
-function companyMatches(company: Company, text: string, query: string, stage: string, country: string, tag: string, quality: string) {
+function companyMatches(
+  company: Company,
+  text: string,
+  query: string,
+  stageFilters: Set<string>,
+  countryFilters: Set<string>,
+  tagFilters: Set<string>,
+  qualityFilters: Set<string>,
+) {
   return (
     (!query || text.includes(query)) &&
-    (!stage || company.outreachStage === stage) &&
-    (!country || company.country === country) &&
-    (!tag || company.tags.some((item) => item.name === tag)) &&
-    (!quality || company.sourceQuality === quality)
+    (stageFilters.size === 0 || stageFilters.has(company.outreachStage)) &&
+    (countryFilters.size === 0 || (company.country ? countryFilters.has(company.country) : false)) &&
+    (tagFilters.size === 0 || company.tags.some((item) => tagFilters.has(item.name))) &&
+    (qualityFilters.size === 0 || qualityFilters.has(company.sourceQuality))
   );
 }
 
@@ -843,20 +867,33 @@ function groupPeopleDirectory(rows: Array<{ person: Person; company: Company }>)
   return [...grouped.values()];
 }
 
-export function CrmShell({ initialData }: CrmShellProps) {
+function initialCompanyIdFor(companies: Company[], companyId?: string) {
+  if (companyId && companies.some((company) => company.id === companyId)) return companyId;
+  return companies[0]?.id ?? "";
+}
+
+export function CrmShell({
+  initialData,
+  companyId,
+  hideDetailPanel = false,
+  hideTable = false,
+  activeView: initialActiveView = "companies",
+}: CrmShellProps) {
+  const router = useRouter();
   const isSignedIn = initialData.authMode === "supabase" && initialData.currentUserName !== "Not signed in";
   const authLabel = initialData.authMode === "demo" ? "Demo data" : isSignedIn ? "Signed in" : "Signed out";
   const authDetail = initialData.authMode === "demo" ? "Local preview" : isSignedIn ? initialData.currentUserName : "Not signed in";
   const isDemoData = initialData.dataMode === "demo";
+  const initialCompanyId = initialCompanyIdFor(initialData.companies, companyId);
   const [companies, setCompanies] = useState(initialData.companies);
-  const [activeView, setActiveView] = useState<ActiveView>("companies");
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(initialData.companies.slice(0, 1).map((company) => company.id)));
-  const [activeCompanyId, setActiveCompanyId] = useState(initialData.companies[0]?.id ?? "");
+  const [activeView, setActiveView] = useState<ActiveView>(initialActiveView);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(companyId && initialCompanyId ? [initialCompanyId] : []));
+  const [activeCompanyId, setActiveCompanyId] = useState(initialCompanyId);
   const [query, setQuery] = useState("");
-  const [stage, setStage] = useState("");
-  const [country, setCountry] = useState("");
-  const [tag, setTag] = useState("");
-  const [quality, setQuality] = useState("");
+  const [stageFilters, setStageFilters] = useState<Set<string>>(new Set());
+  const [countryFilters, setCountryFilters] = useState<Set<string>>(new Set());
+  const [tagFilters, setTagFilters] = useState<Set<string>>(new Set());
+  const [qualityFilters, setQualityFilters] = useState<Set<string>>(new Set());
   const [exportCriterion, setExportCriterion] = useState<ContactExportCriterion>("sector_category");
   const [exportValue, setExportValue] = useState("Biotech");
   const [companyPageSize, setCompanyPageSize] = useState<CompanyPageSize>(100);
@@ -894,14 +931,21 @@ export function CrmShell({ initialData }: CrmShellProps) {
   const [debugStorageIssue, setDebugStorageIssue] = useState<string | null>(null);
   const [incorrectEmails, setIncorrectEmails] = useState<Set<string>>(new Set());
   const [incorrectEmailMessage, setIncorrectEmailMessage] = useState<string | null>(null);
+  const [companyModalId, setCompanyModalId] = useState<string | null>(null);
   const [companyDraft, setCompanyDraft] = useState({ companyId: "", name: "", websites: "", description: "", country: "" });
   const [enrichmentDraft, setEnrichmentDraft] = useState<EnrichmentDraft | null>(null);
   const [companyInvestmentDraft, setCompanyInvestmentDraft] = useState<InvestmentDraft | null>(null);
   const [enrichmentMessage, setEnrichmentMessage] = useState<string | null>(null);
+  const [batchProgress, setBatchProgress] = useState<EnrichmentBatchProgress | null>(null);
   const [isEnriching, setIsEnriching] = useState(false);
+  const [isRefreshingTable, setIsRefreshingTable] = useState(false);
   const [tagDrafts, setTagDrafts] = useState<Record<string, string>>({});
+  const stopBatchRef = useRef(false);
+  const batchAbortControllerRef = useRef<AbortController | null>(null);
   const deferredCompanyQuery = useDeferredValue(query.trim().toLowerCase());
   const deferredPeopleQuery = useDeferredValue(peopleQuery.trim().toLowerCase());
+  const showCompanyTable = !hideTable;
+  const showDetailPanel = !hideDetailPanel;
 
   const selectedCompanies = useMemo(() => companies.filter((company) => selectedIds.has(company.id)), [companies, selectedIds]);
   const companyMergeTarget = selectedCompanies.length >= 2
@@ -910,9 +954,10 @@ export function CrmShell({ initialData }: CrmShellProps) {
   const companyMergeSources = companyMergeTarget ? selectedCompanies.filter((company) => company.id !== companyMergeTarget.id) : [];
   const companySearchTextById = useMemo(() => new Map(companies.map((company) => [company.id, buildCompanySearchText(company)])), [companies]);
   const filteredCompanies = useMemo(
-    () => companies.filter((company) => companyMatches(company, companySearchTextById.get(company.id) ?? "", deferredCompanyQuery, stage, country, tag, quality)),
-    [companies, companySearchTextById, country, deferredCompanyQuery, quality, stage, tag],
+    () => companies.filter((company) => companyMatches(company, companySearchTextById.get(company.id) ?? "", deferredCompanyQuery, stageFilters, countryFilters, tagFilters, qualityFilters)),
+    [companies, companySearchTextById, countryFilters, deferredCompanyQuery, qualityFilters, stageFilters, tagFilters],
   );
+  const activeCompanyFilterCount = stageFilters.size + countryFilters.size + tagFilters.size + qualityFilters.size;
   const companyTotalPages = companyPageSize === "all" ? 1 : Math.max(1, Math.ceil(filteredCompanies.length / companyPageSize));
   const effectiveCompanyPage = Math.min(companyPage, companyTotalPages);
   const visibleCompanies = useMemo(() => {
@@ -959,6 +1004,11 @@ export function CrmShell({ initialData }: CrmShellProps) {
       ),
     [companies],
   );
+  const batchTargetCompanies = selectedCompanies.length ? selectedCompanies : filteredCompanies;
+  const isBatchEnriching = isEnriching && batchProgress !== null;
+  const pendingEnrichmentCount = pendingChanges.filter((change) => change.record.kind === "company-enrichment-update").length;
+  const batchProgressProcessed = batchProgress ? batchProgress.completed + batchProgress.skipped + batchProgress.failed : 0;
+  const batchProgressPercent = batchProgress && batchProgress.total > 0 ? Math.round((batchProgressProcessed / batchProgress.total) * 100) : 0;
   const peopleDirectory = useMemo(() => groupPeopleDirectory(peopleRelationRows), [peopleRelationRows]);
   const tagSummaries = useMemo(() => {
     const companyTags = new Map<string, Extract<TagSummary, { type: "company" }>>();
@@ -1216,6 +1266,57 @@ export function CrmShell({ initialData }: CrmShellProps) {
   }, [initialData.authMode]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (!cancelled) setActiveView(initialActiveView);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialActiveView]);
+
+  useEffect(() => {
+    const companyIds = new Set(initialData.companies.map((company) => company.id));
+    const nextActiveCompanyId = initialCompanyIdFor(initialData.companies, companyId);
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setCompanies(initialData.companies);
+      setSelectedIds((current) => {
+        const next = new Set([...current].filter((id) => companyIds.has(id)));
+        if (companyId && nextActiveCompanyId) next.add(nextActiveCompanyId);
+        return next;
+      });
+      setActiveCompanyId((current) => (companyIds.has(current) ? current : nextActiveCompanyId));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [companyId, initialData.companies]);
+
+  useEffect(() => {
+    if (!companyId) return;
+
+    const routeCompanyId = initialCompanyIdFor(companies, companyId);
+    if (!routeCompanyId) return;
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setActiveCompanyId((current) => (current === routeCompanyId ? current : routeCompanyId));
+      setSelectedIds((current) => (current.has(routeCompanyId) ? current : new Set([routeCompanyId])));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [companies, companyId]);
+
+  useEffect(() => {
     let storedDebugMode = false;
     let cancelled = false;
 
@@ -1337,9 +1438,55 @@ export function CrmShell({ initialData }: CrmShellProps) {
     });
   }
 
-  function openCompany(companyId: string) {
+  function toggleCompanyFilter(setter: React.Dispatch<React.SetStateAction<Set<string>>>, value: string) {
+    setter((current) => {
+      const next = new Set(current);
+      if (next.has(value)) next.delete(value);
+      else next.add(value);
+      return next;
+    });
+    setCompanyPage(1);
+  }
+
+  function clearCompanyFilters() {
+    setStageFilters(new Set());
+    setCountryFilters(new Set());
+    setTagFilters(new Set());
+    setQualityFilters(new Set());
+    setCompanyPage(1);
+  }
+
+  async function refreshCompanyTable() {
+    if (isRefreshingTable) return;
+
+    setIsRefreshingTable(true);
+    setSyncMessage("Refreshing company table from the database...");
+    try {
+      const result = await refreshDashboardAction();
+      if (!result.ok) {
+        setSyncMessage(`Refresh failed: ${result.message}`);
+        return;
+      }
+      router.refresh();
+      setSyncMessage("Company table refresh requested.");
+    } catch (error) {
+      setSyncMessage(error instanceof Error ? `Refresh failed: ${error.message}` : "Refresh failed.");
+    } finally {
+      setIsRefreshingTable(false);
+    }
+  }
+
+  function openCompanyModal(companyId: string) {
     setActiveCompanyId(companyId);
-    setActiveView("companies");
+    setCompanyModalId(companyId);
+  }
+
+  function closeCompanyModal() {
+    setCompanyModalId(null);
+  }
+
+  function openCompany(companyId: string) {
+    openCompanyModal(companyId);
   }
 
   function toggleDebugMode() {
@@ -1355,8 +1502,14 @@ export function CrmShell({ initialData }: CrmShellProps) {
   function resetDebugDraft() {
     setCompanies(initialData.companies);
     setPendingChanges([]);
-    setSelectedIds(new Set(initialData.companies.slice(0, 1).map((company) => company.id)));
-    setActiveCompanyId(initialData.companies[0]?.id ?? "");
+    setSelectedIds(new Set(companyId && initialCompanyId ? [initialCompanyId] : []));
+    setActiveCompanyId(initialCompanyId);
+    setCompanyModalId(null);
+    clearCompanyFilters();
+    setBatchProgress(null);
+    stopBatchRef.current = false;
+    batchAbortControllerRef.current?.abort();
+    batchAbortControllerRef.current = null;
     setCompanyDraft({ companyId: "", name: "", websites: "", description: "", country: "" });
     setEnrichmentDraft(null);
     setCompanyInvestmentDraft(null);
@@ -1462,6 +1615,29 @@ export function CrmShell({ initialData }: CrmShellProps) {
 
     setPendingChanges([]);
     setSyncMessage(`Pushed ${formatChangeCount(changes.length)}.`);
+    setIsPushingChanges(false);
+  }
+
+  async function pushPendingEnrichments() {
+    if (pendingEnrichmentCount === 0 || isPushingChanges) return;
+
+    const changes = pendingChanges.filter((change) => change.record.kind === "company-enrichment-update");
+    const changeKeys = new Set(changes.map((change) => change.key));
+    setIsPushingChanges(true);
+    setSyncMessage(`Pushing ${formatNumber(changes.length)} queued enrichment${changes.length === 1 ? "" : "s"}...`);
+
+    for (let index = 0; index < changes.length; index += 1) {
+      const change = changes[index];
+      const result = await change.run();
+      if (!result.ok) {
+        setSyncMessage(`Push stopped at "${change.label}": ${result.message}`);
+        setIsPushingChanges(false);
+        return;
+      }
+    }
+
+    setPendingChanges((current) => current.filter((change) => !changeKeys.has(change.key)));
+    setSyncMessage(`Pushed ${formatNumber(changes.length)} enrichment${changes.length === 1 ? "" : "s"}.`);
     setIsPushingChanges(false);
   }
 
@@ -1699,9 +1875,48 @@ export function CrmShell({ initialData }: CrmShellProps) {
     updateCompanies((company) => (company.id === companyId ? { ...company, enrichment } : company));
   }
 
+  function companyEnrichmentPayload(companyId: string, enrichment: CompanyEnrichment, reviewed: boolean) {
+    const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
+    return {
+      organizationId: organizationId ?? "",
+      companyId,
+      status: enrichment.status,
+      summary: enrichment.summary,
+      industry: enrichment.industry,
+      subsector: enrichment.subsector,
+      companyType: enrichment.companyType,
+      location: enrichment.location,
+      keywords: enrichment.keywords,
+      sourceUrl: enrichment.sourceUrl,
+      model: enrichment.model,
+      confidence: enrichment.confidence,
+      errorMessage: enrichment.errorMessage,
+      generatedAt: enrichment.generatedAt,
+      reviewed,
+    };
+  }
+
+  function queueCompanyEnrichmentUpdate(companyId: string, enrichment: CompanyEnrichment, label: string, reviewed: boolean) {
+    const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
+    const payload = companyEnrichmentPayload(companyId, enrichment, reviewed);
+    queuePendingChange({
+      key: `company-enrichment:${companyId}`,
+      label,
+      record: {
+        kind: "company-enrichment-update",
+        key: `company-enrichment:${companyId}`,
+        label,
+        payload,
+      },
+      run: () =>
+        initialData.authMode === "supabase" && organizationId && isUuid(companyId)
+          ? updateCompanyEnrichmentAction(payload)
+          : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
+    });
+  }
+
   function saveActiveCompanyEnrichment() {
     if (!activeCompany || !activeCompanyEnrichmentDraft) return;
-    const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
     const enrichment: CompanyEnrichment = {
       ...(activeCompany.enrichment ?? defaultCompanyEnrichment(activeCompany)),
       status: "needs_review",
@@ -1715,43 +1930,13 @@ export function CrmShell({ initialData }: CrmShellProps) {
       updatedAt: new Date().toISOString(),
     };
     updateCompanyEnrichmentLocally(activeCompany.id, enrichment);
-
-    const payload = {
-      organizationId: organizationId ?? "",
-      companyId: activeCompany.id,
-      status: enrichment.status,
-      summary: enrichment.summary,
-      industry: enrichment.industry,
-      subsector: enrichment.subsector,
-      companyType: enrichment.companyType,
-      location: enrichment.location,
-      keywords: enrichment.keywords,
-      sourceUrl: enrichment.sourceUrl,
-      model: enrichment.model,
-      confidence: enrichment.confidence,
-      errorMessage: enrichment.errorMessage,
-      reviewed: true,
-    };
-
-    queuePendingChange({
-      key: `company-enrichment:${activeCompany.id}`,
-      label: "Company enrichment update",
-      record: {
-        kind: "company-enrichment-update",
-        key: `company-enrichment:${activeCompany.id}`,
-        label: "Company enrichment update",
-        payload,
-      },
-      run: () =>
-        initialData.authMode === "supabase" && organizationId && isUuid(activeCompany.id)
-          ? updateCompanyEnrichmentAction(payload)
-          : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-    });
+    queueCompanyEnrichmentUpdate(activeCompany.id, enrichment, "Company enrichment update", true);
   }
 
   async function enrichActiveCompany(force = false) {
     if (!activeCompany || isEnriching) return;
     setIsEnriching(true);
+    setBatchProgress(null);
     setEnrichmentMessage(`Enriching ${activeCompany.name} with local Ollama...`);
     try {
       const response = await fetch("/api/enrichment/company", {
@@ -1780,35 +1965,105 @@ export function CrmShell({ initialData }: CrmShellProps) {
     }
   }
 
+  function requestStopEnrichmentBatch() {
+    stopBatchRef.current = true;
+    batchAbortControllerRef.current?.abort();
+    setBatchProgress((current) => (current ? { ...current, stopRequested: true, currentName: "Stopping..." } : current));
+    setEnrichmentMessage("Stopping enrichment batch...");
+  }
+
   async function enrichCompanyBatch(targetCompanies: Company[]) {
     if (targetCompanies.length === 0 || isEnriching) return;
     setIsEnriching(true);
+    stopBatchRef.current = false;
     let completed = 0;
+    let skipped = 0;
     let failed = 0;
+    let stopped = false;
+    setBatchProgress({
+      total: targetCompanies.length,
+      completed,
+      skipped,
+      failed,
+      currentName: null,
+      stopRequested: false,
+      stopped: false,
+    });
 
     for (const company of targetCompanies) {
-      setEnrichmentMessage(`Enriching ${completed + failed + 1} of ${targetCompanies.length}: ${company.name}`);
+      if (stopBatchRef.current) {
+        stopped = true;
+        break;
+      }
+
+      setEnrichmentMessage(`Enriching ${completed + skipped + failed + 1} of ${targetCompanies.length}: ${company.name}`);
+      setBatchProgress({
+        total: targetCompanies.length,
+        completed,
+        skipped,
+        failed,
+        currentName: company.name,
+        stopRequested: false,
+        stopped: false,
+      });
+      const abortController = new AbortController();
+      batchAbortControllerRef.current = abortController;
+
       try {
         const response = await fetch("/api/enrichment/company", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ companyId: company.id, force: false }),
+          body: JSON.stringify({ companyId: company.id, force: false, persist: false }),
+          signal: abortController.signal,
         });
         const payload = (await response.json()) as { enrichment?: CompanyEnrichment; skipped?: boolean; error?: string };
         if (!response.ok) {
           failed += 1;
-          continue;
-        }
-        if (payload.enrichment) {
+        } else if (payload.skipped) {
+          skipped += 1;
+        } else if (payload.enrichment) {
           updateCompanyEnrichmentLocally(company.id, payload.enrichment);
+          queueCompanyEnrichmentUpdate(company.id, payload.enrichment, "Company enrichment generated", false);
+          completed += 1;
+        } else {
+          failed += 1;
         }
-        completed += 1;
-      } catch {
+      } catch (error) {
+        if (stopBatchRef.current || (error instanceof DOMException && error.name === "AbortError")) {
+          stopped = true;
+          break;
+        }
         failed += 1;
+      } finally {
+        batchAbortControllerRef.current = null;
+        setBatchProgress((current) =>
+          current
+            ? {
+                ...current,
+                completed,
+                skipped,
+                failed,
+                currentName: null,
+              }
+            : current,
+        );
       }
     }
 
-    setEnrichmentMessage(`Enrichment finished: ${completed} saved or skipped${failed ? `, ${failed} failed` : ""}.`);
+    const processed = completed + skipped + failed;
+    const statusText = stopped ? `Enrichment stopped after ${processed} of ${targetCompanies.length}` : "Enrichment finished";
+    setBatchProgress({
+      total: targetCompanies.length,
+      completed,
+      skipped,
+      failed,
+      currentName: null,
+      stopRequested: false,
+      stopped,
+    });
+    setEnrichmentMessage(`${statusText}: ${completed} queued${skipped ? `, ${skipped} skipped` : ""}${failed ? `, ${failed} failed` : ""}.`);
+    stopBatchRef.current = false;
+    batchAbortControllerRef.current = null;
     setIsEnriching(false);
   }
 
@@ -2402,7 +2657,7 @@ export function CrmShell({ initialData }: CrmShellProps) {
         </div>
       </aside>
 
-      <main className="workspace">
+      <main className={clsx("workspace", activeView === "companies" && showCompanyTable && !showDetailPanel && "companies-workspace")}>
         <header className="topbar">
           <div>
             <p className="eyebrow">Private team workspace</p>
@@ -2460,10 +2715,9 @@ export function CrmShell({ initialData }: CrmShellProps) {
             <button
               key={item.stage}
               type="button"
-              className={clsx("pipeline-pill", stage === item.stage && "active")}
+              className={clsx("pipeline-pill", stageFilters.has(item.stage) && "active")}
               onClick={() => {
-                setCompanyPage(1);
-                setStage(stage === item.stage ? "" : item.stage);
+                toggleCompanyFilter(setStageFilters, item.stage);
                 setActiveView("companies");
               }}
               title={`Filter ${item.stage}`}
@@ -2475,7 +2729,8 @@ export function CrmShell({ initialData }: CrmShellProps) {
         </section>
 
         {activeView === "companies" ? (
-          <section className="content-grid">
+          <section className={clsx("content-grid", !showCompanyTable && "detail-only", !showDetailPanel && "table-only")}>
+            {showCompanyTable ? (
             <div className="company-surface">
             <div className="toolbar">
               <label className="search-box">
@@ -2489,22 +2744,48 @@ export function CrmShell({ initialData }: CrmShellProps) {
                   placeholder="Search companies, people, tags, domains"
                 />
               </label>
-              <FilterSelect icon={<Filter size={15} />} value={stage} onChange={(value) => {
-                setCompanyPage(1);
-                setStage(value);
-              }} label="Stage" options={OUTREACH_STAGES} />
-              <FilterSelect value={country} onChange={(value) => {
-                setCompanyPage(1);
-                setCountry(value);
-              }} label="Country" options={countries} />
-              <FilterSelect value={tag} onChange={(value) => {
-                setCompanyPage(1);
-                setTag(value);
-              }} label="Tag" options={tagNames} />
-              <FilterSelect value={quality} onChange={(value) => {
-                setCompanyPage(1);
-                setQuality(value);
-              }} label="Quality" options={Object.keys(SOURCE_QUALITY_LABELS)} />
+              <button
+                type="button"
+                className="secondary-button table-refresh-button"
+                onClick={refreshCompanyTable}
+                disabled={isRefreshingTable}
+                aria-label="Refresh company table"
+                title="Refresh company table from the database"
+              >
+                <RefreshCw size={15} className={clsx(isRefreshingTable && "spinning")} />
+                {isRefreshingTable ? "Refreshing" : "Refresh"}
+              </button>
+              <MultiFilterSelect
+                icon={<Filter size={15} />}
+                label="Stage"
+                options={OUTREACH_STAGES}
+                selected={stageFilters}
+                onToggle={(value) => toggleCompanyFilter(setStageFilters, value)}
+              />
+              <MultiFilterSelect
+                label="Country"
+                options={countries}
+                selected={countryFilters}
+                onToggle={(value) => toggleCompanyFilter(setCountryFilters, value)}
+              />
+              <MultiFilterSelect
+                label="Tag"
+                options={tagNames}
+                selected={tagFilters}
+                onToggle={(value) => toggleCompanyFilter(setTagFilters, value)}
+              />
+              <MultiFilterSelect
+                label="Quality"
+                options={Object.keys(SOURCE_QUALITY_LABELS)}
+                selected={qualityFilters}
+                onToggle={(value) => toggleCompanyFilter(setQualityFilters, value)}
+                formatOption={(value) => SOURCE_QUALITY_LABELS[value as keyof typeof SOURCE_QUALITY_LABELS] ?? value}
+              />
+              {activeCompanyFilterCount > 0 ? (
+                <button type="button" className="text-button filter-clear-button" onClick={clearCompanyFilters}>
+                  <X size={14} /> Clear filters
+                </button>
+              ) : null}
             </div>
 
             <div className="exportbar">
@@ -2578,17 +2859,47 @@ export function CrmShell({ initialData }: CrmShellProps) {
               </button>
               <button
                 type="button"
-                onClick={() => enrichCompanyBatch(selectedCompanies.length ? selectedCompanies : filteredCompanies)}
-                disabled={isEnriching || !initialData.localEnrichmentEnabled || !isSignedIn}
-                title="Run local LLM enrichment for selected companies, or all filtered companies if nothing is selected"
+                className={clsx("batch-enrich-button", isBatchEnriching && "running")}
+                style={{ "--batch-progress": `${batchProgressPercent}%` } as React.CSSProperties}
+                onClick={isBatchEnriching ? requestStopEnrichmentBatch : () => enrichCompanyBatch(batchTargetCompanies)}
+                disabled={!isBatchEnriching && (isEnriching || !initialData.localEnrichmentEnabled || !isSignedIn || batchTargetCompanies.length === 0)}
+                title="Generate local LLM enrichments for selected companies, or all filtered companies if nothing is selected"
+                aria-label={isBatchEnriching ? "Stop enrichment batch" : "Start enrichment batch"}
               >
-                <FlaskConical size={15} /> Enrich
+                <span className="batch-enrich-progress" aria-hidden="true" />
+                <FlaskConical size={15} />
+                {isBatchEnriching
+                  ? batchProgress?.stopRequested
+                    ? "Stopping..."
+                    : `Stop ${formatNumber(batchProgressProcessed)} / ${formatNumber(batchProgress?.total ?? 0)}`
+                  : `Enrich ${formatNumber(batchTargetCompanies.length)}`}
               </button>
               <button type="button" onClick={() => exportCompanies(selectedCompanies.length ? selectedCompanies : filteredCompanies)}>
                 <Download size={15} /> Export
               </button>
               {pendingChanges.length > 0 ? <span className="saving">{formatChangeCount(pendingChanges.length)}</span> : null}
             </div>
+
+            {batchProgress ? (
+              <div className="batch-progress-panel" aria-live="polite">
+                <div>
+                  <strong>{batchProgress.stopped ? "Batch stopped" : isBatchEnriching ? "Batch enriching" : "Batch complete"}</strong>
+                  <span>
+                    {formatNumber(batchProgress.completed)} queued
+                    {batchProgress.skipped ? `, ${formatNumber(batchProgress.skipped)} skipped` : ""}
+                    {batchProgress.failed ? `, ${formatNumber(batchProgress.failed)} failed` : ""}
+                    {" "}of {formatNumber(batchProgress.total)}
+                    {batchProgress.currentName ? ` • ${batchProgress.currentName}` : ""}
+                  </span>
+                </div>
+                <progress value={batchProgressProcessed} max={batchProgress.total} />
+                {!isBatchEnriching && pendingEnrichmentCount > 0 ? (
+                  <button type="button" className="secondary-button" onClick={pushPendingEnrichments} disabled={isPushingChanges}>
+                    <Upload size={15} /> {isPushingChanges ? "Pushing..." : `Push ${formatNumber(pendingEnrichmentCount)} enrichment${pendingEnrichmentCount === 1 ? "" : "s"}`}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
 
             {companyMergeTarget ? (
               <div className="people-merge-panel company-merge-panel">
@@ -2637,6 +2948,16 @@ export function CrmShell({ initialData }: CrmShellProps) {
 
             <div className="company-table-wrap">
               <table className="company-table">
+                <colgroup>
+                  <col className="select-column" />
+                  <col className="company-column" />
+                  <col className="stage-column" />
+                  <col className="tags-column" />
+                  <col className="people-column" />
+                  <col className="quality-column" />
+                  <col className="task-column" />
+                  <col className="activity-column" />
+                </colgroup>
                 <thead>
                   <tr>
                     <th aria-label="Select" />
@@ -2651,7 +2972,12 @@ export function CrmShell({ initialData }: CrmShellProps) {
                 </thead>
                 <tbody>
                   {visibleCompanies.map((company) => (
-                    <tr key={company.id} className={clsx(activeCompany?.id === company.id && "active-row")} onClick={() => setActiveCompanyId(company.id)}>
+                    <tr
+                      key={company.id}
+                      className={clsx(activeCompany?.id === company.id && "active-row")}
+                      onClick={() => setActiveCompanyId(company.id)}
+                      onDoubleClick={() => openCompanyModal(company.id)}
+                    >
                       <td>
                         <input
                           type="checkbox"
@@ -2732,20 +3058,40 @@ export function CrmShell({ initialData }: CrmShellProps) {
               </div>
             </div>
             </div>
+            ) : null}
 
-          {activeCompany ? (
-            <aside className="detail-panel" aria-label="Company details">
+          {activeCompany && (showDetailPanel || companyModalId) ? (
+            <div
+              className={clsx("company-detail-host", !showDetailPanel && "modal-backdrop company-detail-backdrop")}
+              role={!showDetailPanel ? "presentation" : undefined}
+              onClick={!showDetailPanel ? closeCompanyModal : undefined}
+            >
+            <aside
+              className={clsx("detail-panel", !showDetailPanel && "company-detail-modal")}
+              aria-label="Company details"
+              role={!showDetailPanel ? "dialog" : undefined}
+              aria-modal={!showDetailPanel ? true : undefined}
+              onClick={!showDetailPanel ? (event) => event.stopPropagation() : undefined}
+            >
               <div className="detail-header">
                 <div>
                   <p className="eyebrow">Company detail</p>
                   <input
                     className="title-input"
+                    aria-label="Company name"
                     value={activeCompanyDraft.name}
                     onChange={(event) => setCompanyDraft({ ...activeCompanyDraft, name: event.target.value })}
                     onBlur={() => updateActiveCompany("name", activeCompanyDraft.name)}
                   />
                 </div>
-                <span className={clsx("quality-pill", activeCompany.sourceQuality)}>{SOURCE_QUALITY_LABELS[activeCompany.sourceQuality]}</span>
+                <div className="detail-header-actions">
+                  <span className={clsx("quality-pill", activeCompany.sourceQuality)}>{SOURCE_QUALITY_LABELS[activeCompany.sourceQuality]}</span>
+                  {!showDetailPanel ? (
+                    <button type="button" className="icon-button" onClick={closeCompanyModal} title="Close company details">
+                      <X size={16} />
+                    </button>
+                  ) : null}
+                </div>
               </div>
 
               <div className="detail-fields">
@@ -3011,6 +3357,7 @@ export function CrmShell({ initialData }: CrmShellProps) {
                 </div>
               </section>
             </aside>
+            </div>
           ) : null}
           </section>
         ) : null}
@@ -3306,7 +3653,8 @@ export function CrmShell({ initialData }: CrmShellProps) {
                   ))}
                   {group.total > group.companies.length ? (
                     <button type="button" className="pipeline-more" onClick={() => {
-                      setStage(group.stage);
+                      setStageFilters(new Set([group.stage]));
+                      setCompanyPage(1);
                       setActiveView("companies");
                     }}>
                       View {formatNumber(group.total - group.companies.length)} more
@@ -3618,6 +3966,58 @@ function Metric({ label, value, tone }: { label: string; value: string; tone?: "
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  );
+}
+
+function MultiFilterSelect({
+  icon,
+  label,
+  options,
+  selected,
+  onToggle,
+  formatOption = (value) => value,
+}: {
+  icon?: React.ReactNode;
+  label: string;
+  options: readonly string[];
+  selected: Set<string>;
+  onToggle: (value: string) => void;
+  formatOption?: (value: string) => string;
+}) {
+  const selectedLabels = options.filter((option) => selected.has(option)).map(formatOption);
+  const valueLabel =
+    selectedLabels.length === 0
+      ? "All"
+      : selectedLabels.length > 2
+        ? `${selectedLabels.slice(0, 2).join(", ")} +${selectedLabels.length - 2}`
+        : selectedLabels.join(", ");
+
+  return (
+    <details className={clsx("multi-filter", selected.size > 0 && "active")}>
+      <summary>
+        <span className="multi-filter-icon">{icon ?? <Filter size={15} />}</span>
+        <span className="multi-filter-copy">
+          <span>{label}</span>
+          <strong>{valueLabel}</strong>
+        </span>
+        <ChevronDown size={14} />
+      </summary>
+      <div className="multi-filter-menu">
+        <div className="multi-filter-menu-header">
+          <span>{label}</span>
+          <strong>{selected.size === 0 ? "All" : `${selected.size} selected`}</strong>
+        </div>
+        {options.map((option) => (
+          <label key={option} className="multi-filter-option">
+            <input type="checkbox" checked={selected.has(option)} onChange={() => onToggle(option)} />
+            <span className="multi-filter-check" aria-hidden="true">
+              <Check size={13} />
+            </span>
+            <span>{formatOption(option)}</span>
+          </label>
+        ))}
+      </div>
+    </details>
   );
 }
 
