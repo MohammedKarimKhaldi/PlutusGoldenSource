@@ -210,3 +210,11 @@ export const investmentDealSchema = z.object({
   message: "Choose an investment relationship, company, or contact for this deal.",
   path: ["relationshipId"],
 });
+
+export const investmentDealStatusUpdateSchema = z.object({
+  organizationId: z.string().uuid(),
+  companyId: z.string().uuid(),
+  dealId: z.string().uuid(),
+  status: z.enum(INVESTMENT_DEAL_STATUSES),
+  note: z.string().trim().max(4000).nullable().optional(),
+});

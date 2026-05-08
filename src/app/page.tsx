@@ -1,4 +1,4 @@
-import Link from "next/link";
+/* eslint-disable @next/next/no-html-link-for-pages -- Main menu entries intentionally use document navigation so deployed shells can enter dynamic CRM routes without client-router dependence. */
 import { Building2, CircleDot, FileSpreadsheet, ListChecks, Tags, UsersRound } from "lucide-react";
 
 const menuItems = [
@@ -45,10 +45,10 @@ export default function Home() {
     <main className="main-menu-page">
       <section className="main-menu-shell" aria-labelledby="main-menu-title">
         <header className="main-menu-header">
-          <Link className="main-menu-brand" href="/companies?view=companies" prefetch={false} aria-label="Open Golden Source CRM companies">
+          <a className="main-menu-brand" href="/companies?view=companies" aria-label="Open Golden Source CRM companies">
             <span>GS</span>
             <strong>Golden Source CRM</strong>
-          </Link>
+          </a>
           <div className="main-menu-title">
             <h1 id="main-menu-title">Main menu</h1>
           </div>
@@ -58,12 +58,12 @@ export default function Home() {
           {menuItems.map((item) => {
             const Icon = item.icon;
             return (
-              <Link key={item.href} className={`main-menu-item ${item.tone}`} href={item.href} prefetch={false}>
+              <a key={item.href} className={`main-menu-item ${item.tone}`} href={item.href}>
                 <span className="main-menu-icon">
                   <Icon size={20} />
                 </span>
                 <strong>{item.label}</strong>
-              </Link>
+              </a>
             );
           })}
         </div>
