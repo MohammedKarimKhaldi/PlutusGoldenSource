@@ -1964,6 +1964,85 @@ button.contact-chip {
   font-weight: 700;
 }
 
+.main-menu-page {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.main-menu-shell {
+  display: grid;
+  gap: 18px;
+  width: min(100%, 980px);
+  margin: 0 auto;
+}
+
+.main-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 0 4px;
+}
+
+.main-menu-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.main-menu-item {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 104px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  text-decoration: none;
+}
+
+.main-menu-item:hover {
+  border-color: var(--accent);
+  background: #f8fbff;
+}
+
+.main-menu-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  color: var(--accent);
+  background: #eff6ff;
+}
+
+.main-menu-copy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.main-menu-copy strong,
+.main-menu-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.main-menu-copy strong {
+  font-size: 15px;
+}
+
+.main-menu-copy span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 750;
+}
+
 @media (max-width: 1180px) {
   .app-shell {
     grid-template-columns: 72px minmax(0, 1fr);
@@ -2000,6 +2079,10 @@ button.contact-chip {
   .sync-dock.complete {
     width: min(360px, calc(100vw - 116px));
   }
+
+  .main-menu-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
@@ -2024,6 +2107,19 @@ button.contact-chip {
 
   .workspace {
     padding: 14px;
+  }
+
+  .main-menu-page {
+    padding: 16px;
+  }
+
+  .main-menu-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .main-menu-grid {
+    grid-template-columns: 1fr;
   }
 
   .topbar,
