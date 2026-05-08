@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 
 import { serializeCompanyWebsites } from "@/lib/company-websites";
 import { clearDashboardDataCache } from "@/lib/data";
+import { applyCompanyEnrichmentTags } from "@/lib/enrichment/company-tags";
 import { normalizeCompanyName, normalizePersonName } from "@/lib/import/normalization";
 import { buildPersonEmailUpdateRows, normalizePersonCategories } from "@/lib/person-update";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
@@ -623,6 +624,22 @@ export async function updateCompanyEnrichmentAction(input: unknown): Promise<Act
   );
 
   if (error) return { ok: false, message: error.message };
+
+  try {
+    await applyCompanyEnrichmentTags({
+      supabase,
+      organizationId,
+      companyId,
+      enrichment: {
+        status: enrichment.status,
+        industry: enrichment.industry ?? null,
+        subsector: enrichment.subsector ?? null,
+      },
+    });
+  } catch (tagError) {
+    return { ok: false, message: tagError instanceof Error ? tagError.message : String(tagError) };
+  }
+
   await revalidateDashboard();
   return { ok: true, message: "Company enrichment saved." };
 }

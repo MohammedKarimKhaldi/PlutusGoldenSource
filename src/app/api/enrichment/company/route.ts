@@ -3,8 +3,10 @@ import { z } from "zod";
 
 import { clearDashboardDataCache } from "@/lib/data";
 import { enrichCompany } from "@/lib/enrichment/company-enrichment";
+import { applyCompanyEnrichmentTags, companyEnrichmentTagNames } from "@/lib/enrichment/company-tags";
 import { localEnrichmentEnabled } from "@/lib/enrichment-config";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
+import type { Tag } from "@/lib/types";
 
 export const runtime = "nodejs";
 
@@ -21,6 +23,11 @@ type CompanyRow = {
   description: string | null;
   country: string | null;
   categories: string[] | null;
+};
+type ExistingEnrichmentRow = {
+  status: "pending" | "completed" | "needs_review" | "failed";
+  industry: string | null;
+  subsector: string | null;
 };
 
 function websiteDomains(value: string | null) {
@@ -55,12 +62,29 @@ export async function POST(request: Request) {
   if (!parsed.data.force) {
     const { data: existing, error: existingError } = await adminSupabase
       .from("company_enrichments")
-      .select("status")
+      .select("status,industry,subsector")
       .eq("organization_id", organizationId)
       .eq("company_id", parsed.data.companyId)
       .maybeSingle();
     if (existingError) return NextResponse.json({ error: existingError.message }, { status: 500 });
-    if (existing?.status === "completed") return NextResponse.json({ skipped: true, status: "completed" });
+    if (existing?.status === "completed") {
+      const existingEnrichment = existing as ExistingEnrichmentRow;
+      const tagNames = companyEnrichmentTagNames(existingEnrichment);
+      if (!parsed.data.persist) return NextResponse.json({ skipped: true, status: "completed", tagNames });
+
+      try {
+        const tagResult = await applyCompanyEnrichmentTags({
+          supabase: adminSupabase,
+          organizationId,
+          companyId: parsed.data.companyId,
+          enrichment: existingEnrichment,
+        });
+        if (tagResult.tags.length > 0) await clearDashboardDataCache();
+        return NextResponse.json({ skipped: true, status: "completed", tagNames: tagResult.tagNames, tags: tagResult.tags });
+      } catch (error) {
+        return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+      }
+    }
   }
 
   const { data: company, error: companyError } = await adminSupabase
@@ -83,7 +107,8 @@ export async function POST(request: Request) {
     categories: companyRow.categories ?? [],
   });
 
-  if (!parsed.data.persist) return NextResponse.json({ enrichment });
+  const tagNames = companyEnrichmentTagNames(enrichment);
+  if (!parsed.data.persist) return NextResponse.json({ enrichment, tagNames });
 
   const { error: upsertError } = await adminSupabase.from("company_enrichments").upsert(
     {
@@ -108,7 +133,21 @@ export async function POST(request: Request) {
   );
 
   if (upsertError) return NextResponse.json({ error: upsertError.message }, { status: 500 });
+
+  let tags: Tag[] = [];
+  try {
+    const tagResult = await applyCompanyEnrichmentTags({
+      supabase: adminSupabase,
+      organizationId,
+      companyId: enrichment.companyId,
+      enrichment,
+    });
+    tags = tagResult.tags;
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+  }
+
   await clearDashboardDataCache();
 
-  return NextResponse.json({ enrichment });
+  return NextResponse.json({ enrichment, tagNames, tags });
 }

@@ -50,6 +50,7 @@ import {
   updatePersonAction,
 } from "@/app/actions";
 import { normalizeCompanyWebsites } from "@/lib/company-websites";
+import { DEFAULT_COMPANY_TAG_COLOR } from "@/lib/enrichment/company-tags";
 import {
   CONTACT_EXPORT_LABELS,
   contactExportValues,
@@ -69,7 +70,7 @@ type CrmShellProps = {
   activeView?: ActiveView;
 };
 
-type ActiveView = "companies" | "people" | "tags" | "pipeline" | "tasks" | "import";
+export type ActiveView = "companies" | "people" | "tags" | "pipeline" | "tasks" | "import";
 type PeopleDirectoryRow = {
   person: Person;
   company: Company;
@@ -228,6 +229,14 @@ type EnrichmentDraft = {
   companyType: string;
   location: string;
   keywords: string;
+};
+type EnrichmentApiResponse = {
+  enrichment?: CompanyEnrichment;
+  skipped?: boolean;
+  status?: string;
+  error?: string;
+  tagNames?: string[];
+  tags?: Tag[];
 };
 type InvestmentDraft = {
   targetKey: string;
@@ -729,6 +738,20 @@ function uniqueTags(tags: Tag[]) {
   }
 
   return nextTags;
+}
+
+function tagIdForGeneratedName(name: string) {
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return `local-enrichment-tag-${slug || "tag"}`;
+}
+
+function enrichmentResponseTags(tags: Tag[] | undefined, tagNames: string[] | undefined) {
+  if (tags && tags.length > 0) return tags;
+  return (tagNames ?? []).map((name) => ({
+    id: tagIdForGeneratedName(name),
+    name,
+    color: DEFAULT_COMPANY_TAG_COLOR,
+  }));
 }
 
 function mergeInvestmentRelationships(relationships: InvestmentRelationship[]) {
@@ -1883,8 +1906,13 @@ export function CrmShell({
     });
   }
 
-  function updateCompanyEnrichmentLocally(companyId: string, enrichment: CompanyEnrichment) {
-    updateCompanies((company) => (company.id === companyId ? { ...company, enrichment } : company));
+  function updateCompanyEnrichmentLocally(companyId: string, enrichment: CompanyEnrichment, tags: Tag[] = []) {
+    updateCompanies((company) => (company.id === companyId ? { ...company, enrichment, tags: uniqueTags([...company.tags, ...tags]) } : company));
+  }
+
+  function updateCompanyTagsLocally(companyId: string, tags: Tag[]) {
+    if (tags.length === 0) return;
+    updateCompanies((company) => (company.id === companyId ? { ...company, tags: uniqueTags([...company.tags, ...tags]) } : company));
   }
 
   function companyEnrichmentPayload(companyId: string, enrichment: CompanyEnrichment, reviewed: boolean) {
@@ -1956,17 +1984,19 @@ export function CrmShell({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ companyId: activeCompany.id, force }),
       });
-      const payload = (await response.json()) as { enrichment?: CompanyEnrichment; skipped?: boolean; error?: string };
+      const payload = (await response.json()) as EnrichmentApiResponse;
       if (!response.ok) {
         setEnrichmentMessage(payload.error ?? "Company enrichment failed.");
         return;
       }
+      const responseTags = enrichmentResponseTags(payload.tags, payload.tagNames);
       if (payload.skipped) {
+        updateCompanyTagsLocally(activeCompany.id, payload.tags ?? []);
         setEnrichmentMessage("Company already has completed enrichment. Use retry to force a refresh.");
         return;
       }
       if (payload.enrichment) {
-        updateCompanyEnrichmentLocally(activeCompany.id, payload.enrichment);
+        updateCompanyEnrichmentLocally(activeCompany.id, payload.enrichment, responseTags);
         setEnrichmentDraft(enrichmentDraftForCompany({ ...activeCompany, enrichment: payload.enrichment }));
         setEnrichmentMessage(payload.enrichment.status === "completed" ? "Company enrichment saved." : `Enrichment needs review: ${payload.enrichment.errorMessage ?? "No website text found."}`);
       }
@@ -2028,13 +2058,15 @@ export function CrmShell({
           body: JSON.stringify({ companyId: company.id, force: false, persist: false }),
           signal: abortController.signal,
         });
-        const payload = (await response.json()) as { enrichment?: CompanyEnrichment; skipped?: boolean; error?: string };
+        const payload = (await response.json()) as EnrichmentApiResponse;
+        const responseTags = enrichmentResponseTags(payload.tags, payload.tagNames);
         if (!response.ok) {
           failed += 1;
         } else if (payload.skipped) {
+          updateCompanyTagsLocally(company.id, payload.tags ?? []);
           skipped += 1;
         } else if (payload.enrichment) {
-          updateCompanyEnrichmentLocally(company.id, payload.enrichment);
+          updateCompanyEnrichmentLocally(company.id, payload.enrichment, responseTags);
           queueCompanyEnrichmentUpdate(company.id, payload.enrichment, "Company enrichment generated", false);
           completed += 1;
         } else {
