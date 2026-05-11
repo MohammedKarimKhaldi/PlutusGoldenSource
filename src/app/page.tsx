@@ -1,5 +1,5 @@
 /* eslint-disable @next/next/no-html-link-for-pages -- Main menu entries intentionally use document navigation so deployed shells can enter dynamic CRM routes without client-router dependence. */
-import { Building2, CircleDot, CreditCard, FileSpreadsheet, ListChecks, Tags, UsersRound } from "lucide-react";
+import { Building2, CircleDot, CreditCard, FileSpreadsheet, Handshake, ListChecks, Tags, UsersRound } from "lucide-react";
 
 const menuItems = [
   {
@@ -25,6 +25,12 @@ const menuItems = [
     label: "Pipeline",
     icon: CircleDot,
     tone: "green",
+  },
+  {
+    href: "/companies?view=clients",
+    label: "Fundraising clients",
+    icon: Handshake,
+    tone: "rose",
   },
   {
     href: "/companies?view=tasks",

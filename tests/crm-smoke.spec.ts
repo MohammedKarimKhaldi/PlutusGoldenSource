@@ -84,6 +84,39 @@ test("accounting view supports demo document workflow and filtering", async ({ p
   await expect(page.locator("tr", { hasText: "May retainer revised" })).toHaveCount(0);
 });
 
+test("fundraising clients view supports demo client and target workflow", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("link", { name: /^Fundraising clients$/ }).click();
+  await expect(page).toHaveURL(/\/companies\?view=clients$/);
+  await expect(page.getByRole("heading", { name: "Fundraising clients" })).toBeVisible();
+  await expect(page.getByText("Signed mandates and investor outreach")).toBeVisible();
+
+  const clientForm = page.locator(".fundraising-form").first();
+  await clientForm.locator("select").first().selectOption({ label: "AlphaSights" });
+  await clientForm.getByLabel("Mandate name").fill("AlphaSights demo raise");
+  await clientForm.getByLabel("Target raise").fill("3000000.00");
+  await clientForm.getByLabel("Currency").fill("GBP");
+  await clientForm.getByRole("button", { name: /Save client/ }).click();
+  await expect(page.getByText("Demo fundraising client saved locally.")).toBeVisible();
+  await expect(page.getByText("AlphaSights demo raise")).toBeVisible();
+
+  await page.getByRole("button", { name: "Investor targets" }).click();
+  const targetForm = page.locator(".fundraising-form").first();
+  await targetForm.getByLabel("Fundraising client").selectOption({ label: "AlphaSights demo raise" });
+  await targetForm.locator("select").nth(1).selectOption({ label: "Morgan Stanley" });
+  await targetForm.getByLabel("Investor name").fill("Morgan Stanley demo target");
+  await targetForm.getByLabel("Investor type").fill("Private Equity");
+  await targetForm.getByLabel("Min ticket").fill("250000.00");
+  await targetForm.getByLabel("Max ticket").fill("500000.00");
+  await targetForm.getByRole("button", { name: /Save target/ }).click();
+  await expect(page.getByText("Demo investor target saved locally.")).toBeVisible();
+  await expect(page.locator("tr", { hasText: "Morgan Stanley demo target" })).toBeVisible();
+
+  await page.getByPlaceholder("Search clients, investors, next steps").fill("Morgan Stanley demo");
+  await expect(page.locator("tr", { hasText: "Morgan Stanley demo target" })).toHaveCount(1);
+});
+
 test("login page shows safe auth feedback", async ({ page }) => {
   await page.goto("/login?error=invalid_credentials");
   await expect(page.getByText("Email or password is incorrect.")).toBeVisible();

@@ -39,6 +39,32 @@ export type AccountingLedgerEntryType = (typeof ACCOUNTING_LEDGER_ENTRY_TYPES)[n
 export const ACCOUNTING_DIRECTIONS = ["incoming", "outgoing"] as const;
 export type AccountingDirection = (typeof ACCOUNTING_DIRECTIONS)[number];
 
+export const FUNDRAISING_CLIENT_STAGES = [
+  "signed",
+  "onboarding",
+  "materials",
+  "investor_outreach",
+  "meetings",
+  "term_sheet",
+  "closing",
+  "completed",
+  "paused",
+] as const;
+export type FundraisingClientStage = (typeof FUNDRAISING_CLIENT_STAGES)[number];
+
+export const FUNDRAISING_TARGET_STAGES = [
+  "target",
+  "contact_started",
+  "contacted",
+  "replied",
+  "meeting",
+  "diligence",
+  "soft_commit",
+  "passed",
+  "closed",
+] as const;
+export type FundraisingTargetStage = (typeof FUNDRAISING_TARGET_STAGES)[number];
+
 export type Tag = {
   id: string;
   name: string;
@@ -206,6 +232,65 @@ export type AccountingData = {
   summaries: AccountingCurrencySummary[];
 };
 
+export type FundraisingClient = {
+  id: string;
+  companyId: string;
+  mandateName: string;
+  stage: FundraisingClientStage;
+  ownerId: string | null;
+  primaryContactPersonId: string | null;
+  signedOn: string | null;
+  targetRaiseAmountMinor: number | null;
+  targetRaiseCurrency: string | null;
+  materialsUrl: string | null;
+  dataRoomUrl: string | null;
+  notes: string | null;
+  createdBy: string | null;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type FundraisingClientTarget = {
+  id: string;
+  clientId: string;
+  investorCompanyId: string | null;
+  investorPersonId: string | null;
+  investorName: string;
+  investorEmail: string | null;
+  investorType: string | null;
+  ticketSizeMinMinor: number | null;
+  ticketSizeMaxMinor: number | null;
+  ticketSizeCurrency: string | null;
+  stage: FundraisingTargetStage;
+  ownerId: string | null;
+  lastContactedAt: string | null;
+  nextStep: string | null;
+  notes: string | null;
+  createdBy: string | null;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type FundraisingCurrencySummary = {
+  currency: string;
+  targetRaiseMinor: number;
+  ticketSizeMinMinor: number;
+  ticketSizeMaxMinor: number;
+  retainerIncomeMinor: number;
+  commissionIncomeMinor: number;
+  expensesMinor: number;
+  netCashMinor: number;
+  outstandingMinor: number;
+};
+
+export type ClientDashboardData = {
+  clients: FundraisingClient[];
+  targets: FundraisingClientTarget[];
+  summaries: FundraisingCurrencySummary[];
+};
+
 export type ImportSummary = {
   totalRows: number;
   rawRows: number;
@@ -224,6 +309,7 @@ export type DashboardData = {
   importSummary: ImportSummary;
   accountingAccess: AccountingAccess;
   accounting: AccountingData | null;
+  clientDashboard: ClientDashboardData;
   authMode: "demo" | "supabase";
   dataMode: "demo" | "supabase";
   localEnrichmentEnabled: boolean;

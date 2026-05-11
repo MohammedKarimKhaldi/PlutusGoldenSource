@@ -9,6 +9,8 @@ import {
   ACCOUNTING_LEDGER_ENTRY_TYPES,
   CAPACITY_STATUSES,
   ENRICHMENT_STATUSES,
+  FUNDRAISING_CLIENT_STAGES,
+  FUNDRAISING_TARGET_STAGES,
   INVESTMENT_DEAL_STATUSES,
   INVESTMENT_STATUSES,
   OUTREACH_STAGES,
@@ -185,6 +187,24 @@ const nullableTrimmedTextSchema = (max: number) =>
     .optional()
     .transform((value) => value || null);
 
+const optionalMoneyMinorSchema = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable().optional();
+const optionalCurrencySchema = currencySchema.nullable().optional();
+const linkedCompanyCreateSchema = z.object({
+  name: z.string().trim().min(1).max(240),
+  websiteDomains: z.array(z.string().max(320)).max(20).transform(normalizeCompanyWebsites).optional().default([]),
+  description: nullableTrimmedTextSchema(5000),
+  country: nullableTrimmedTextSchema(120),
+  categories: z.array(z.string().trim().min(1).max(120)).max(30).optional().default([]),
+});
+const linkedPersonCreateSchema = z.object({
+  displayName: z.string().trim().min(1).max(240),
+  email: z.string().trim().max(320).nullable().optional(),
+  jobTitle: nullableTrimmedTextSchema(240),
+  linkedinUrl: nullableTrimmedTextSchema(1000),
+  country: nullableTrimmedTextSchema(120),
+  categories: personCategoriesSchema.optional().default([]),
+});
+
 export const companyEnrichmentUpdateSchema = z.object({
   organizationId: z.string().uuid(),
   companyId: z.string().uuid(),
@@ -324,4 +344,94 @@ export const accountingDeleteSchema = z.object({
   entityType: z.enum(["document", "ledger_entry"]),
   id: z.string().uuid(),
   reason: z.string().trim().min(1).max(1000),
+});
+
+export const fundraisingClientSchema = z
+  .object({
+    organizationId: z.string().uuid(),
+    clientId: z.string().uuid().optional(),
+    companyId: nullableUuidSchema,
+    createCompany: linkedCompanyCreateSchema.optional(),
+    mandateName: z.string().trim().min(1).max(240),
+    stage: z.enum(FUNDRAISING_CLIENT_STAGES),
+    ownerId: nullableUuidSchema,
+    primaryContactPersonId: nullableUuidSchema,
+    createPrimaryContact: linkedPersonCreateSchema.optional(),
+    signedOn: z.string().date().nullable().optional(),
+    targetRaiseAmountMinor: optionalMoneyMinorSchema,
+    targetRaiseCurrency: optionalCurrencySchema,
+    materialsUrl: nullableTrimmedTextSchema(1000),
+    dataRoomUrl: nullableTrimmedTextSchema(1000),
+    notes: nullableTrimmedTextSchema(4000),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.companyId && !value.createCompany) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Choose an existing client company or create a new one.",
+        path: ["companyId"],
+      });
+    }
+
+    if ((value.targetRaiseAmountMinor == null) !== (value.targetRaiseCurrency == null)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Target raise amount and currency must be provided together.",
+        path: ["targetRaiseCurrency"],
+      });
+    }
+  });
+
+export const fundraisingTargetSchema = z
+  .object({
+    organizationId: z.string().uuid(),
+    targetId: z.string().uuid().optional(),
+    clientId: z.string().uuid(),
+    investorCompanyId: nullableUuidSchema,
+    createInvestorCompany: linkedCompanyCreateSchema.optional(),
+    investorPersonId: nullableUuidSchema,
+    createInvestorPerson: linkedPersonCreateSchema.optional(),
+    investorName: z.string().trim().min(1).max(240),
+    investorEmail: nullableTrimmedTextSchema(320),
+    investorType: nullableTrimmedTextSchema(160),
+    ticketSizeMinMinor: optionalMoneyMinorSchema,
+    ticketSizeMaxMinor: optionalMoneyMinorSchema,
+    ticketSizeCurrency: optionalCurrencySchema,
+    stage: z.enum(FUNDRAISING_TARGET_STAGES),
+    ownerId: nullableUuidSchema,
+    lastContactedAt: z.string().datetime().nullable().optional(),
+    nextStep: nullableTrimmedTextSchema(500),
+    notes: nullableTrimmedTextSchema(4000),
+  })
+  .superRefine((value, ctx) => {
+    if (value.ticketSizeMaxMinor != null && value.ticketSizeMinMinor != null && value.ticketSizeMaxMinor < value.ticketSizeMinMinor) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Maximum ticket size must be greater than or equal to the minimum.",
+        path: ["ticketSizeMaxMinor"],
+      });
+    }
+
+    const hasTicketAmount = value.ticketSizeMinMinor != null || value.ticketSizeMaxMinor != null;
+    if (hasTicketAmount !== (value.ticketSizeCurrency != null)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Ticket size amount and currency must be provided together.",
+        path: ["ticketSizeCurrency"],
+      });
+    }
+
+    if (!value.investorName && !value.investorCompanyId && !value.investorPersonId && !value.createInvestorCompany && !value.createInvestorPerson) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Add an investor name or linked CRM record.",
+        path: ["investorName"],
+      });
+    }
+  });
+
+export const fundraisingDeleteSchema = z.object({
+  organizationId: z.string().uuid(),
+  entityType: z.enum(["client", "target"]),
+  id: z.string().uuid(),
 });

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { buildAccountingSummaries } from "@/lib/accounting";
 import { normalizeCompanyWebsites } from "@/lib/company-websites";
 import { localEnrichmentEnabled } from "@/lib/enrichment-config";
+import { emptyClientDashboardData, withFundraisingSummaries } from "@/lib/fundraising";
 import { mockDashboardData } from "@/lib/mock-data";
 import { normalizePersonName } from "@/lib/import/normalization";
 import { createSupabaseServerClient, hasSupabaseBrowserConfig } from "@/lib/supabase/server";
@@ -17,7 +18,10 @@ import type {
   Activity,
   Company,
   CompanyEnrichment,
+  ClientDashboardData,
   DashboardData,
+  FundraisingClient,
+  FundraisingClientTarget,
   ImportSummary,
   InvestmentDeal,
   InvestmentRelationship,
@@ -31,7 +35,7 @@ type SupabaseError = { code?: string; details?: string | null; message: string }
 type SupabasePage<T> = PromiseLike<{ data: T[] | null; error: SupabaseError | null }>;
 
 const PAGE_SIZE = 1000;
-const DASHBOARD_CACHE_VERSION = 4;
+const DASHBOARD_CACHE_VERSION = 5;
 const DASHBOARD_CACHE_REVALIDATE_MS = 5 * 60 * 1000;
 const DASHBOARD_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const dashboardMemoryCache = new Map<string, { savedAt: number; data: DashboardData }>();
@@ -208,6 +212,47 @@ type AccountingLedgerEntryRow = {
   updated_at: string;
 };
 
+type FundraisingClientRow = {
+  id: string;
+  company_id: string;
+  mandate_name: string;
+  stage: FundraisingClient["stage"];
+  owner_id: string | null;
+  primary_contact_person_id: string | null;
+  signed_on: string | null;
+  target_raise_amount_minor: number | null;
+  target_raise_currency: string | null;
+  materials_url: string | null;
+  data_room_url: string | null;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type FundraisingClientTargetRow = {
+  id: string;
+  client_id: string;
+  investor_company_id: string | null;
+  investor_person_id: string | null;
+  investor_name: string;
+  investor_email: string | null;
+  investor_type: string | null;
+  ticket_size_min_minor: number | null;
+  ticket_size_max_minor: number | null;
+  ticket_size_currency: string | null;
+  stage: FundraisingClientTarget["stage"];
+  owner_id: string | null;
+  last_contacted_at: string | null;
+  next_step: string | null;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type DashboardRows = {
   companyRows: CompanyRow[];
   outreachRows: OutreachRow[];
@@ -340,8 +385,8 @@ function accountingAccessFromRole(role: AccountingRole | null): AccountingAccess
   };
 }
 
-function isMissingAccountingTable(error: SupabaseError) {
-  return error.code === "42P01" || error.code === "PGRST205";
+function isMissingAccountingTable(error: Pick<SupabaseError, "code"> & { message?: string }) {
+  return error.code === "42P01" || error.code === "PGRST205" || Boolean(error.message?.includes("42P01") || error.message?.includes("PGRST205"));
 }
 
 function mapAccountingDocument(row: AccountingDocumentRow): AccountingDocument {
@@ -386,6 +431,51 @@ function mapAccountingLedgerEntry(row: AccountingLedgerEntryRow): AccountingLedg
     voidedAt: row.voided_at,
     voidedBy: row.voided_by,
     voidReason: row.void_reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapFundraisingClient(row: FundraisingClientRow): FundraisingClient {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    mandateName: row.mandate_name,
+    stage: row.stage,
+    ownerId: row.owner_id,
+    primaryContactPersonId: row.primary_contact_person_id,
+    signedOn: row.signed_on,
+    targetRaiseAmountMinor: row.target_raise_amount_minor == null ? null : Number(row.target_raise_amount_minor),
+    targetRaiseCurrency: row.target_raise_currency,
+    materialsUrl: row.materials_url,
+    dataRoomUrl: row.data_room_url,
+    notes: row.notes,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapFundraisingClientTarget(row: FundraisingClientTargetRow): FundraisingClientTarget {
+  return {
+    id: row.id,
+    clientId: row.client_id,
+    investorCompanyId: row.investor_company_id,
+    investorPersonId: row.investor_person_id,
+    investorName: row.investor_name,
+    investorEmail: row.investor_email,
+    investorType: row.investor_type,
+    ticketSizeMinMinor: row.ticket_size_min_minor == null ? null : Number(row.ticket_size_min_minor),
+    ticketSizeMaxMinor: row.ticket_size_max_minor == null ? null : Number(row.ticket_size_max_minor),
+    ticketSizeCurrency: row.ticket_size_currency,
+    stage: row.stage,
+    ownerId: row.owner_id,
+    lastContactedAt: row.last_contacted_at,
+    nextStep: row.next_step,
+    notes: row.notes,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -445,6 +535,40 @@ async function loadAccountingForUser(supabase: SupabaseServerClient, organizatio
   } catch (error) {
     console.warn("Could not load accounting data", error instanceof Error ? error.message : error);
     return { access, accounting: { documents: [], ledgerEntries: [], summaries: [] } };
+  }
+}
+
+async function loadClientDashboardForOrganization(supabase: SupabaseServerClient, organizationId: string): Promise<Omit<ClientDashboardData, "summaries">> {
+  try {
+    const [clientRows, targetRows] = await Promise.all([
+      fetchPaged<FundraisingClientRow>("fundraising clients", (from, to) =>
+        supabase
+          .from("fundraising_clients")
+          .select("id,company_id,mandate_name,stage,owner_id,primary_contact_person_id,signed_on,target_raise_amount_minor,target_raise_currency,materials_url,data_room_url,notes,created_by,updated_by,created_at,updated_at")
+          .eq("organization_id", organizationId)
+          .order("updated_at", { ascending: false })
+          .range(from, to),
+      ),
+      fetchPaged<FundraisingClientTargetRow>("fundraising client targets", (from, to) =>
+        supabase
+          .from("fundraising_client_targets")
+          .select("id,client_id,investor_company_id,investor_person_id,investor_name,investor_email,investor_type,ticket_size_min_minor,ticket_size_max_minor,ticket_size_currency,stage,owner_id,last_contacted_at,next_step,notes,created_by,updated_by,created_at,updated_at")
+          .eq("organization_id", organizationId)
+          .order("updated_at", { ascending: false })
+          .range(from, to),
+      ),
+    ]);
+
+    return {
+      clients: clientRows.map(mapFundraisingClient),
+      targets: targetRows.map(mapFundraisingClientTarget),
+    };
+  } catch (error) {
+    const maybeSupabaseError = error as Error & { code?: string };
+    if (!isMissingAccountingTable({ code: maybeSupabaseError.code, message: maybeSupabaseError.message })) {
+      console.warn("Could not load fundraising client dashboard", error instanceof Error ? error.message : error);
+    }
+    return { clients: [], targets: [] };
   }
 }
 
@@ -775,8 +899,13 @@ async function fetchDashboardDataFromSupabase({
   userId: string;
   currentUserName: string;
 }): Promise<DashboardData> {
-  const [rows, accountingResult] = await Promise.all([loadDashboardRows(supabase, organizationId), loadAccountingForUser(supabase, organizationId, userId)]);
+  const [rows, accountingResult, clientDashboardRows] = await Promise.all([
+    loadDashboardRows(supabase, organizationId),
+    loadAccountingForUser(supabase, organizationId, userId),
+    loadClientDashboardForOrganization(supabase, organizationId),
+  ]);
   const importStats = rows.importStats;
+  const clientDashboard = withFundraisingSummaries(clientDashboardRows, accountingResult.accounting);
 
   return {
     currentUserName,
@@ -788,6 +917,7 @@ async function fetchDashboardDataFromSupabase({
     tasks: rows.taskRows.map(mapTask),
     accountingAccess: accountingResult.access,
     accounting: accountingResult.accounting,
+    clientDashboard,
     importSummary: {
       totalRows: rows.importRowCount ?? importStats?.totalRows ?? 0,
       rawRows: importStats?.rawRows ?? 0,
@@ -860,6 +990,7 @@ export async function getDashboardData(): Promise<DashboardData> {
       localEnrichmentEnabled: localEnrichmentEnabled(),
       accountingAccess: NO_ACCOUNTING_ACCESS,
       accounting: null,
+      clientDashboard: emptyClientDashboardData(),
       currentUserName: user.email ?? "Signed in",
       dataWarning: "Add NEXT_PUBLIC_DEFAULT_ORG_ID to load Supabase contacts.",
     };
@@ -898,6 +1029,7 @@ export async function getDashboardData(): Promise<DashboardData> {
       localEnrichmentEnabled: localEnrichmentEnabled(),
       accountingAccess: NO_ACCOUNTING_ACCESS,
       accounting: null,
+      clientDashboard: emptyClientDashboardData(),
       currentUserName: user.email ?? "Signed in",
       dataWarning: `Could not load Supabase contacts: ${message}`,
     };
