@@ -5,13 +5,14 @@ Private small-team CRM for turning `Contacts for database.xlsx` into a cloud gol
 ## What Is Built
 
 - Next.js TypeScript app with an operational CRM UI.
-- Supabase/Postgres schema with Auth-ready organization membership and RLS.
+- Supabase/Postgres schema with Auth-ready organization membership, accounting allowlists, and RLS.
 - XLSX parser that preserves raw workbook rows before normalization.
 - Aggressive company/person normalization with merge audit records.
 - Manual outreach tracking: stages, tags, highlighted people, activities, notes, and tasks.
 - Single-criterion contacts export for sectors/tags/stages/countries/email domains/enrichment/investment fields.
 - Local Ollama company enrichment with reviewable company profile fields.
 - Investment history tracking for companies and contacts, including past/current investor status and fully allocated capacity.
+- Restricted accounting and payments tracking for retainers, commissions, expenses, ledger cash movements, voids, and audited hard deletes.
 - Demo fallback so the UI runs before Supabase credentials are added.
 
 ## Local Run
@@ -28,7 +29,7 @@ Without Supabase env vars, the app uses demo data shaped from the workbook findi
 ## Supabase Setup
 
 1. Create a Supabase project.
-2. Run `supabase/migrations/001_initial_schema.sql`, then `supabase/migrations/002_enrichment_investments.sql`, in the Supabase SQL editor or through the Supabase CLI.
+2. Run the SQL files in `supabase/migrations/` in order in the Supabase SQL editor or through the Supabase CLI.
 3. Copy `.env.example` to `.env.local` and fill:
 
 ```bash
@@ -52,6 +53,13 @@ values ('<organization-id>', '<auth-user-id>', 'owner');
 ```
 
 Use the returned organization id as `NEXT_PUBLIC_DEFAULT_ORG_ID`.
+
+Add finance users to the accounting allowlist before they can open the Accounting view:
+
+```sql
+insert into public.accounting_members (organization_id, user_id, role)
+values ('<organization-id>', '<auth-user-id>', 'admin');
+```
 
 ## Import The Workbook
 

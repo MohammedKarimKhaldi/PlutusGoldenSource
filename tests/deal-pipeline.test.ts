@@ -34,6 +34,8 @@ function makePerson(overrides: Partial<Person> = {}): Person {
     id: "person-1",
     sourcePersonIds: [],
     displayName: "Avery Chen",
+    firstName: null,
+    lastName: null,
     email: null,
     emails: [],
     phone: null,

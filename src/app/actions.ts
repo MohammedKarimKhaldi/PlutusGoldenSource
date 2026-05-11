@@ -9,9 +9,13 @@ import { applyCompanyEnrichmentTags } from "@/lib/enrichment/company-tags";
 import { normalizeCompanyName, normalizePersonName } from "@/lib/import/normalization";
 import { buildPersonEmailUpdateRows, normalizePersonCategories } from "@/lib/person-update";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
-import type { InvestmentDealStatus } from "@/lib/types";
+import type { AccountingDocument, AccountingLedgerEntry, AccountingRole, InvestmentDealStatus } from "@/lib/types";
 import {
   activitySchema,
+  accountingDeleteSchema,
+  accountingDocumentSchema,
+  accountingLedgerEntrySchema,
+  accountingVoidSchema,
   companyEnrichmentUpdateSchema,
   companyUpdateSchema,
   investmentDealStatusUpdateSchema,
@@ -33,10 +37,26 @@ type ActionResult = {
   ok: boolean;
   message: string;
 };
+type AccountingDocumentActionResult = ActionResult & {
+  document?: AccountingDocument;
+};
+type AccountingLedgerEntryActionResult = ActionResult & {
+  entry?: AccountingLedgerEntry;
+};
+type AccountingVoidActionResult = ActionResult & {
+  document?: AccountingDocument;
+  entry?: AccountingLedgerEntry;
+};
+type AccountingDeleteActionResult = ActionResult & {
+  deletedId?: string;
+  entityType?: "document" | "ledger_entry";
+};
 type PersonUpdateInput = {
   organizationId: string;
   personId: string;
   displayName: string;
+  firstName?: string | null;
+  lastName?: string | null;
   emails: string[];
   jobTitle?: string | null;
   linkedinUrl?: string | null;
@@ -100,6 +120,57 @@ type InvestmentDealStatusRow = {
   name: string;
   status: InvestmentDealStatus;
 };
+type AccountingMemberRow = {
+  role: AccountingRole;
+};
+type AccountingDocumentRow = {
+  id: string;
+  company_id: string | null;
+  document_type: AccountingDocument["documentType"];
+  status: AccountingDocument["status"];
+  title: string;
+  amount_minor: number;
+  currency: string;
+  issued_on: string | null;
+  due_on: string | null;
+  external_reference: string | null;
+  document_url: string | null;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  voided_at: string | null;
+  voided_by: string | null;
+  void_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+type AccountingLedgerEntryRow = {
+  id: string;
+  document_id: string | null;
+  company_id: string | null;
+  entry_type: AccountingLedgerEntry["entryType"];
+  direction: AccountingLedgerEntry["direction"];
+  amount_minor: number;
+  currency: string;
+  occurred_on: string;
+  external_reference: string | null;
+  document_url: string | null;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  voided_at: string | null;
+  voided_by: string | null;
+  void_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+type AccountingLinkedDocumentRow = {
+  id: string;
+  company_id: string | null;
+  currency: string;
+  status: AccountingDocument["status"];
+  voided_at: string | null;
+};
 
 const WRITE_CHUNK_SIZE = 500;
 const PERSON_UPDATE_CONCURRENCY = 25;
@@ -115,6 +186,10 @@ const INVESTMENT_DEAL_STATUS_LABELS: Record<InvestmentDealStatus, string> = {
   closed: "Closed",
   passed: "Passed",
 };
+const ACCOUNTING_DOCUMENT_COLUMNS =
+  "id,company_id,document_type,status,title,amount_minor,currency,issued_on,due_on,external_reference,document_url,notes,created_by,updated_by,voided_at,voided_by,void_reason,created_at,updated_at";
+const ACCOUNTING_LEDGER_COLUMNS =
+  "id,document_id,company_id,entry_type,direction,amount_minor,currency,occurred_on,external_reference,document_url,notes,created_by,updated_by,voided_at,voided_by,void_reason,created_at,updated_at";
 
 function unavailable(): ActionResult {
   return {
@@ -130,6 +205,53 @@ function sleep(ms: number) {
 function formatUnknownError(error: unknown) {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function mapAccountingDocument(row: AccountingDocumentRow): AccountingDocument {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    documentType: row.document_type,
+    status: row.status,
+    title: row.title,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency,
+    issuedOn: row.issued_on,
+    dueOn: row.due_on,
+    externalReference: row.external_reference,
+    documentUrl: row.document_url,
+    notes: row.notes,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+    voidedAt: row.voided_at,
+    voidedBy: row.voided_by,
+    voidReason: row.void_reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapAccountingLedgerEntry(row: AccountingLedgerEntryRow): AccountingLedgerEntry {
+  return {
+    id: row.id,
+    documentId: row.document_id,
+    companyId: row.company_id,
+    entryType: row.entry_type,
+    direction: row.direction,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency,
+    occurredOn: row.occurred_on,
+    externalReference: row.external_reference,
+    documentUrl: row.document_url,
+    notes: row.notes,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+    voidedAt: row.voided_at,
+    voidedBy: row.voided_by,
+    voidReason: row.void_reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 async function createSupabaseWriteClient(): Promise<SupabaseWriteClient | null> {
@@ -161,6 +283,80 @@ async function revalidateDashboard() {
   revalidatePath("/");
   revalidatePath("/companies");
   revalidatePath("/companies/[id]", "page");
+}
+
+async function requireAccountingEditor(supabase: SupabaseServerClient, organizationId: string): Promise<{ ok: true; userId: string; role: AccountingRole } | { ok: false; result: ActionResult }> {
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    return { ok: false, result: { ok: false, message: "Sign in with a finance-enabled account before changing accounting data." } };
+  }
+
+  const { data, error } = await supabase
+    .from("accounting_members")
+    .select("role")
+    .eq("organization_id", organizationId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (error) return { ok: false, result: { ok: false, message: error.message } };
+
+  const role = (data as AccountingMemberRow | null)?.role;
+  if (role !== "editor" && role !== "admin") {
+    return { ok: false, result: { ok: false, message: "Your finance access is read-only." } };
+  }
+
+  return { ok: true, userId: user.id, role };
+}
+
+async function ensureAccountingCompany(supabase: SupabaseServerClient, organizationId: string, companyId: string | null | undefined) {
+  if (!companyId) return null;
+
+  const { data, error } = await supabase
+    .from("companies")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("id", companyId)
+    .maybeSingle();
+
+  if (error) return error.message;
+  if (!data) return "Could not find this company in the selected organization.";
+  return null;
+}
+
+async function insertAccountingAuditEvent({
+  supabase,
+  organizationId,
+  userId,
+  action,
+  entityType,
+  entityId,
+  beforeData,
+  afterData,
+}: {
+  supabase: SupabaseServerClient;
+  organizationId: string;
+  userId: string;
+  action: "create" | "update" | "void" | "delete";
+  entityType: "document" | "ledger_entry";
+  entityId: string;
+  beforeData: unknown;
+  afterData: unknown;
+}) {
+  const { error } = await supabase.from("accounting_audit_events").insert({
+    organization_id: organizationId,
+    actor_user_id: userId,
+    action,
+    entity_type: entityType,
+    entity_id: entityId,
+    before_data: beforeData ?? null,
+    after_data: afterData ?? null,
+  });
+
+  return error;
 }
 
 export async function refreshDashboardAction(): Promise<ActionResult> {
@@ -354,6 +550,8 @@ async function updatePeopleInSupabase(updates: PersonUpdateInput[]): Promise<Act
         source_record_id: existingPerson.source_record_id,
         display_name: update.displayName,
         normalized_name: normalizePersonName(update.displayName),
+        first_name: update.firstName ?? null,
+        last_name: update.lastName ?? null,
         ...(update.jobTitle !== undefined ? { job_title: update.jobTitle } : {}),
         ...(update.linkedinUrl !== undefined ? { linkedin_url: update.linkedinUrl } : {}),
         ...(update.phone !== undefined ? { phone_numbers: update.phone } : {}),
@@ -428,6 +626,398 @@ export async function signOut() {
     await supabase.auth.signOut();
   }
   redirect("/login");
+}
+
+export async function saveAccountingDocumentAction(input: unknown): Promise<AccountingDocumentActionResult> {
+  const parsed = accountingDocumentSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid accounting document." };
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return unavailable();
+
+  const access = await requireAccountingEditor(supabase, parsed.data.organizationId);
+  if (!access.ok) return access.result;
+  if (parsed.data.status === "void") return { ok: false, message: "Use the void action for accounting documents." };
+
+  const companyError = await ensureAccountingCompany(supabase, parsed.data.organizationId, parsed.data.companyId);
+  if (companyError) return { ok: false, message: companyError };
+
+  const row = {
+    organization_id: parsed.data.organizationId,
+    company_id: parsed.data.companyId ?? null,
+    document_type: parsed.data.documentType,
+    status: parsed.data.status,
+    title: parsed.data.title,
+    amount_minor: parsed.data.amountMinor,
+    currency: parsed.data.currency,
+    issued_on: parsed.data.issuedOn ?? null,
+    due_on: parsed.data.dueOn ?? null,
+    external_reference: parsed.data.externalReference ?? null,
+    document_url: parsed.data.documentUrl ?? null,
+    notes: parsed.data.notes ?? null,
+    updated_by: access.userId,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (parsed.data.documentId) {
+    const { data: existing, error: existingError } = await supabase
+      .from("accounting_documents")
+      .select(ACCOUNTING_DOCUMENT_COLUMNS)
+      .eq("organization_id", parsed.data.organizationId)
+      .eq("id", parsed.data.documentId)
+      .maybeSingle();
+
+    if (existingError) return { ok: false, message: existingError.message };
+    if (!existing) return { ok: false, message: "Could not find this accounting document." };
+
+    const existingRow = existing as AccountingDocumentRow;
+    if (existingRow.status === "void" || existingRow.voided_at) return { ok: false, message: "Voided accounting documents cannot be edited." };
+
+    const { data: updated, error: updateError } = await supabase
+      .from("accounting_documents")
+      .update(row)
+      .eq("organization_id", parsed.data.organizationId)
+      .eq("id", parsed.data.documentId)
+      .select(ACCOUNTING_DOCUMENT_COLUMNS)
+      .single();
+
+    if (updateError) return { ok: false, message: updateError.message };
+
+    const auditError = await insertAccountingAuditEvent({
+      supabase,
+      organizationId: parsed.data.organizationId,
+      userId: access.userId,
+      action: "update",
+      entityType: "document",
+      entityId: parsed.data.documentId,
+      beforeData: existingRow,
+      afterData: updated,
+    });
+    if (auditError) return { ok: false, message: auditError.message };
+
+    await revalidateDashboard();
+    return { ok: true, message: "Accounting document saved.", document: mapAccountingDocument(updated as AccountingDocumentRow) };
+  }
+
+  const { data: inserted, error: insertError } = await supabase
+    .from("accounting_documents")
+    .insert({
+      ...row,
+      created_by: access.userId,
+    })
+    .select(ACCOUNTING_DOCUMENT_COLUMNS)
+    .single();
+
+  if (insertError) return { ok: false, message: insertError.message };
+
+  const insertedRow = inserted as AccountingDocumentRow;
+  const auditError = await insertAccountingAuditEvent({
+    supabase,
+    organizationId: parsed.data.organizationId,
+    userId: access.userId,
+    action: "create",
+    entityType: "document",
+    entityId: insertedRow.id,
+    beforeData: null,
+    afterData: insertedRow,
+  });
+  if (auditError) return { ok: false, message: auditError.message };
+
+  await revalidateDashboard();
+  return { ok: true, message: "Accounting document created.", document: mapAccountingDocument(insertedRow) };
+}
+
+export async function saveAccountingLedgerEntryAction(input: unknown): Promise<AccountingLedgerEntryActionResult> {
+  const parsed = accountingLedgerEntrySchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid accounting ledger entry." };
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return unavailable();
+
+  const access = await requireAccountingEditor(supabase, parsed.data.organizationId);
+  if (!access.ok) return access.result;
+
+  let linkedDocument: AccountingLinkedDocumentRow | null = null;
+  if (parsed.data.documentId) {
+    const { data, error } = await supabase
+      .from("accounting_documents")
+      .select("id,company_id,currency,status,voided_at")
+      .eq("organization_id", parsed.data.organizationId)
+      .eq("id", parsed.data.documentId)
+      .maybeSingle();
+
+    if (error) return { ok: false, message: error.message };
+    if (!data) return { ok: false, message: "Could not find the linked accounting document." };
+
+    linkedDocument = data as AccountingLinkedDocumentRow;
+    if (linkedDocument.status === "void" || linkedDocument.voided_at) return { ok: false, message: "Cannot link payments to a voided document." };
+    if (linkedDocument.currency !== parsed.data.currency) return { ok: false, message: "Ledger entry currency must match the linked document." };
+    if (linkedDocument.company_id && parsed.data.companyId && linkedDocument.company_id !== parsed.data.companyId) {
+      return { ok: false, message: "Ledger entry company must match the linked document." };
+    }
+  }
+
+  const companyId = parsed.data.companyId ?? linkedDocument?.company_id ?? null;
+  const companyError = await ensureAccountingCompany(supabase, parsed.data.organizationId, companyId);
+  if (companyError) return { ok: false, message: companyError };
+
+  const row = {
+    organization_id: parsed.data.organizationId,
+    document_id: parsed.data.documentId ?? null,
+    company_id: companyId,
+    entry_type: parsed.data.entryType,
+    direction: parsed.data.direction,
+    amount_minor: parsed.data.amountMinor,
+    currency: parsed.data.currency,
+    occurred_on: parsed.data.occurredOn,
+    external_reference: parsed.data.externalReference ?? null,
+    document_url: parsed.data.documentUrl ?? null,
+    notes: parsed.data.notes ?? null,
+    updated_by: access.userId,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (parsed.data.entryId) {
+    const { data: existing, error: existingError } = await supabase
+      .from("accounting_ledger_entries")
+      .select(ACCOUNTING_LEDGER_COLUMNS)
+      .eq("organization_id", parsed.data.organizationId)
+      .eq("id", parsed.data.entryId)
+      .maybeSingle();
+
+    if (existingError) return { ok: false, message: existingError.message };
+    if (!existing) return { ok: false, message: "Could not find this accounting ledger entry." };
+
+    const existingRow = existing as AccountingLedgerEntryRow;
+    if (existingRow.voided_at) return { ok: false, message: "Voided ledger entries cannot be edited." };
+
+    const { data: updated, error: updateError } = await supabase
+      .from("accounting_ledger_entries")
+      .update(row)
+      .eq("organization_id", parsed.data.organizationId)
+      .eq("id", parsed.data.entryId)
+      .select(ACCOUNTING_LEDGER_COLUMNS)
+      .single();
+
+    if (updateError) return { ok: false, message: updateError.message };
+
+    const auditError = await insertAccountingAuditEvent({
+      supabase,
+      organizationId: parsed.data.organizationId,
+      userId: access.userId,
+      action: "update",
+      entityType: "ledger_entry",
+      entityId: parsed.data.entryId,
+      beforeData: existingRow,
+      afterData: updated,
+    });
+    if (auditError) return { ok: false, message: auditError.message };
+
+    await revalidateDashboard();
+    return { ok: true, message: "Ledger entry saved.", entry: mapAccountingLedgerEntry(updated as AccountingLedgerEntryRow) };
+  }
+
+  const { data: inserted, error: insertError } = await supabase
+    .from("accounting_ledger_entries")
+    .insert({
+      ...row,
+      created_by: access.userId,
+    })
+    .select(ACCOUNTING_LEDGER_COLUMNS)
+    .single();
+
+  if (insertError) return { ok: false, message: insertError.message };
+
+  const insertedRow = inserted as AccountingLedgerEntryRow;
+  const auditError = await insertAccountingAuditEvent({
+    supabase,
+    organizationId: parsed.data.organizationId,
+    userId: access.userId,
+    action: "create",
+    entityType: "ledger_entry",
+    entityId: insertedRow.id,
+    beforeData: null,
+    afterData: insertedRow,
+  });
+  if (auditError) return { ok: false, message: auditError.message };
+
+  await revalidateDashboard();
+  return { ok: true, message: "Ledger entry created.", entry: mapAccountingLedgerEntry(insertedRow) };
+}
+
+export async function voidAccountingRecordAction(input: unknown): Promise<AccountingVoidActionResult> {
+  const parsed = accountingVoidSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid accounting void request." };
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return unavailable();
+
+  const access = await requireAccountingEditor(supabase, parsed.data.organizationId);
+  if (!access.ok) return access.result;
+
+  const now = new Date().toISOString();
+  if (parsed.data.entityType === "document") {
+    const { data: existing, error: existingError } = await supabase
+      .from("accounting_documents")
+      .select(ACCOUNTING_DOCUMENT_COLUMNS)
+      .eq("organization_id", parsed.data.organizationId)
+      .eq("id", parsed.data.id)
+      .maybeSingle();
+
+    if (existingError) return { ok: false, message: existingError.message };
+    if (!existing) return { ok: false, message: "Could not find this accounting document." };
+
+    const existingRow = existing as AccountingDocumentRow;
+    if (existingRow.status === "void" || existingRow.voided_at) return { ok: false, message: "This accounting document is already voided." };
+
+    const { data: updated, error: updateError } = await supabase
+      .from("accounting_documents")
+      .update({
+        status: "void",
+        voided_at: now,
+        voided_by: access.userId,
+        void_reason: parsed.data.reason,
+        updated_by: access.userId,
+        updated_at: now,
+      })
+      .eq("organization_id", parsed.data.organizationId)
+      .eq("id", parsed.data.id)
+      .select(ACCOUNTING_DOCUMENT_COLUMNS)
+      .single();
+
+    if (updateError) return { ok: false, message: updateError.message };
+
+    const auditError = await insertAccountingAuditEvent({
+      supabase,
+      organizationId: parsed.data.organizationId,
+      userId: access.userId,
+      action: "void",
+      entityType: "document",
+      entityId: parsed.data.id,
+      beforeData: existingRow,
+      afterData: updated,
+    });
+    if (auditError) return { ok: false, message: auditError.message };
+
+    await revalidateDashboard();
+    return { ok: true, message: "Accounting document voided.", document: mapAccountingDocument(updated as AccountingDocumentRow) };
+  }
+
+  const { data: existing, error: existingError } = await supabase
+    .from("accounting_ledger_entries")
+    .select(ACCOUNTING_LEDGER_COLUMNS)
+    .eq("organization_id", parsed.data.organizationId)
+    .eq("id", parsed.data.id)
+    .maybeSingle();
+
+  if (existingError) return { ok: false, message: existingError.message };
+  if (!existing) return { ok: false, message: "Could not find this accounting ledger entry." };
+
+  const existingRow = existing as AccountingLedgerEntryRow;
+  if (existingRow.voided_at) return { ok: false, message: "This ledger entry is already voided." };
+
+  const { data: updated, error: updateError } = await supabase
+    .from("accounting_ledger_entries")
+    .update({
+      voided_at: now,
+      voided_by: access.userId,
+      void_reason: parsed.data.reason,
+      updated_by: access.userId,
+      updated_at: now,
+    })
+    .eq("organization_id", parsed.data.organizationId)
+    .eq("id", parsed.data.id)
+    .select(ACCOUNTING_LEDGER_COLUMNS)
+    .single();
+
+  if (updateError) return { ok: false, message: updateError.message };
+
+  const auditError = await insertAccountingAuditEvent({
+    supabase,
+    organizationId: parsed.data.organizationId,
+    userId: access.userId,
+    action: "void",
+    entityType: "ledger_entry",
+    entityId: parsed.data.id,
+    beforeData: existingRow,
+    afterData: updated,
+  });
+  if (auditError) return { ok: false, message: auditError.message };
+
+  await revalidateDashboard();
+  return { ok: true, message: "Ledger entry voided.", entry: mapAccountingLedgerEntry(updated as AccountingLedgerEntryRow) };
+}
+
+export async function deleteAccountingRecordAction(input: unknown): Promise<AccountingDeleteActionResult> {
+  const parsed = accountingDeleteSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid accounting delete request." };
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return unavailable();
+
+  const access = await requireAccountingEditor(supabase, parsed.data.organizationId);
+  if (!access.ok) return access.result;
+
+  const deletedAt = new Date().toISOString();
+  if (parsed.data.entityType === "document") {
+    const { data: existing, error: existingError } = await supabase
+      .from("accounting_documents")
+      .select(ACCOUNTING_DOCUMENT_COLUMNS)
+      .eq("organization_id", parsed.data.organizationId)
+      .eq("id", parsed.data.id)
+      .maybeSingle();
+
+    if (existingError) return { ok: false, message: existingError.message };
+    if (!existing) return { ok: false, message: "Could not find this accounting document." };
+
+    const existingRow = existing as AccountingDocumentRow;
+    const auditError = await insertAccountingAuditEvent({
+      supabase,
+      organizationId: parsed.data.organizationId,
+      userId: access.userId,
+      action: "delete",
+      entityType: "document",
+      entityId: parsed.data.id,
+      beforeData: existingRow,
+      afterData: { deleted_at: deletedAt, delete_reason: parsed.data.reason },
+    });
+    if (auditError) return { ok: false, message: auditError.message };
+
+    const { error: deleteError } = await supabase.from("accounting_documents").delete().eq("organization_id", parsed.data.organizationId).eq("id", parsed.data.id).select("id").single();
+    if (deleteError) return { ok: false, message: deleteError.message };
+
+    await revalidateDashboard();
+    return { ok: true, message: "Accounting document deleted.", deletedId: parsed.data.id, entityType: "document" };
+  }
+
+  const { data: existing, error: existingError } = await supabase
+    .from("accounting_ledger_entries")
+    .select(ACCOUNTING_LEDGER_COLUMNS)
+    .eq("organization_id", parsed.data.organizationId)
+    .eq("id", parsed.data.id)
+    .maybeSingle();
+
+  if (existingError) return { ok: false, message: existingError.message };
+  if (!existing) return { ok: false, message: "Could not find this accounting ledger entry." };
+
+  const existingRow = existing as AccountingLedgerEntryRow;
+  const auditError = await insertAccountingAuditEvent({
+    supabase,
+    organizationId: parsed.data.organizationId,
+    userId: access.userId,
+    action: "delete",
+    entityType: "ledger_entry",
+    entityId: parsed.data.id,
+    beforeData: existingRow,
+    afterData: { deleted_at: deletedAt, delete_reason: parsed.data.reason },
+  });
+  if (auditError) return { ok: false, message: auditError.message };
+
+  const { error: deleteError } = await supabase.from("accounting_ledger_entries").delete().eq("organization_id", parsed.data.organizationId).eq("id", parsed.data.id).select("id").single();
+  if (deleteError) return { ok: false, message: deleteError.message };
+
+  await revalidateDashboard();
+  return { ok: true, message: "Ledger entry deleted.", deletedId: parsed.data.id, entityType: "ledger_entry" };
 }
 
 export async function updateCompanyAction(input: unknown): Promise<ActionResult> {
@@ -644,8 +1234,11 @@ export async function updateCompanyEnrichmentAction(input: unknown): Promise<Act
       companyId,
       enrichment: {
         status: enrichment.status,
+        summary: enrichment.summary ?? null,
         industry: enrichment.industry ?? null,
         subsector: enrichment.subsector ?? null,
+        companyType: enrichment.companyType ?? null,
+        keywords: enrichment.keywords,
       },
     });
   } catch (tagError) {

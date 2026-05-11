@@ -1,5 +1,5 @@
 /* eslint-disable @next/next/no-html-link-for-pages -- Main menu entries intentionally use document navigation so deployed shells can enter dynamic CRM routes without client-router dependence. */
-import { Building2, CircleDot, FileSpreadsheet, ListChecks, Tags, UsersRound } from "lucide-react";
+import { Building2, CircleDot, CreditCard, FileSpreadsheet, ListChecks, Tags, UsersRound } from "lucide-react";
 
 const menuItems = [
   {
@@ -41,6 +41,16 @@ const menuItems = [
 ];
 
 export default function Home() {
+  const visibleMenuItems = [
+    ...menuItems,
+    {
+      href: "/companies?view=accounting",
+      label: "Accounting",
+      icon: CreditCard,
+      tone: "emerald",
+    },
+  ];
+
   return (
     <main className="main-menu-page">
       <section className="main-menu-shell" aria-labelledby="main-menu-title">
@@ -55,7 +65,7 @@ export default function Home() {
         </header>
 
         <div className="main-menu-grid">
-          {menuItems.map((item) => {
+          {visibleMenuItems.map((item) => {
             const Icon = item.icon;
             return (
               <a key={item.href} className={`main-menu-item ${item.tone}`} href={item.href}>

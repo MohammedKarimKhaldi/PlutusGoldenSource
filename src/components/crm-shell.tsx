@@ -10,6 +10,7 @@ import {
   Check,
   ChevronDown,
   CircleDot,
+  CreditCard,
   FlaskConical,
   Download,
   FileSpreadsheet,
@@ -36,6 +37,9 @@ import {
   addActivityAction,
   addCompanyTagAction,
   addInvestmentDealAction,
+  deleteAccountingRecordAction,
+  saveAccountingDocumentAction,
+  saveAccountingLedgerEntryAction,
   highlightPersonAction,
   mergeCompaniesAction,
   mergePeopleAction,
@@ -49,7 +53,9 @@ import {
   updateInvestmentRelationshipAction,
   updatePeopleAction,
   updatePersonAction,
+  voidAccountingRecordAction,
 } from "@/app/actions";
+import { buildAccountingSummaries } from "@/lib/accounting";
 import { normalizeCompanyWebsites } from "@/lib/company-websites";
 import { buildDealPipelineRows, groupDealPipelineRows, type DealPipelineRow } from "@/lib/deal-pipeline";
 import { DEFAULT_COMPANY_TAG_COLOR } from "@/lib/enrichment/company-tags";
@@ -60,8 +66,35 @@ import {
   type ContactExportCriterion,
 } from "@/lib/export/contacts";
 import { isValidPersonEmail, normalizePersonCategories, normalizePersonEmails } from "@/lib/person-update";
-import type { CapacityStatus, Company, CompanyEnrichment, DashboardData, InvestmentDealStatus, InvestmentRelationship, InvestmentStatus, OutreachStage, Person, Tag } from "@/lib/types";
-import { CAPACITY_STATUSES, INVESTMENT_DEAL_STATUSES, INVESTMENT_STATUSES, OUTREACH_STAGES } from "@/lib/types";
+import type {
+  AccountingData,
+  AccountingDirection,
+  AccountingDocument,
+  AccountingDocumentStatus,
+  AccountingDocumentType,
+  AccountingLedgerEntry,
+  AccountingLedgerEntryType,
+  CapacityStatus,
+  Company,
+  CompanyEnrichment,
+  DashboardData,
+  InvestmentDealStatus,
+  InvestmentRelationship,
+  InvestmentStatus,
+  OutreachStage,
+  Person,
+  Tag,
+} from "@/lib/types";
+import {
+  ACCOUNTING_DIRECTIONS,
+  ACCOUNTING_DOCUMENT_STATUSES,
+  ACCOUNTING_DOCUMENT_TYPES,
+  ACCOUNTING_LEDGER_ENTRY_TYPES,
+  CAPACITY_STATUSES,
+  INVESTMENT_DEAL_STATUSES,
+  INVESTMENT_STATUSES,
+  OUTREACH_STAGES,
+} from "@/lib/types";
 
 type CrmShellProps = {
   initialData: DashboardData;
@@ -72,7 +105,7 @@ type CrmShellProps = {
   activeView?: ActiveView;
 };
 
-export type ActiveView = "companies" | "people" | "tags" | "pipeline" | "tasks" | "import";
+export type ActiveView = "companies" | "people" | "tags" | "pipeline" | "tasks" | "import" | "accounting";
 type PeopleDirectoryRow = {
   person: Person;
   company: Company;
@@ -101,6 +134,8 @@ type PendingPersonUpdate = {
   organizationId: string;
   personId: string;
   displayName: string;
+  firstName?: string | null;
+  lastName?: string | null;
   emails?: string[];
   jobTitle?: string | null;
   linkedinUrl?: string | null;
@@ -258,6 +293,40 @@ type InvestmentDraft = {
   dealRole: string;
   dealNotes: string;
 };
+type AccountingTab = "documents" | "ledger";
+type AccountingDocumentDraft = {
+  documentId: string | null;
+  documentType: AccountingDocumentType;
+  status: Exclude<AccountingDocumentStatus, "void">;
+  companyId: string;
+  title: string;
+  amount: string;
+  currency: string;
+  issuedOn: string;
+  dueOn: string;
+  externalReference: string;
+  documentUrl: string;
+  notes: string;
+};
+type AccountingLedgerDraft = {
+  entryId: string | null;
+  documentId: string;
+  entryType: AccountingLedgerEntryType;
+  direction: AccountingDirection;
+  companyId: string;
+  amount: string;
+  currency: string;
+  occurredOn: string;
+  externalReference: string;
+  documentUrl: string;
+  notes: string;
+};
+type AccountingRecordActionTarget = {
+  action: "void" | "delete";
+  entityType: "document" | "ledger_entry";
+  id: string;
+  title: string;
+};
 type PipelineStatusDraft = {
   status: InvestmentDealStatus;
   note: string;
@@ -301,6 +370,33 @@ const INVESTMENT_DEAL_STATUS_LABELS: Record<InvestmentDealStatus, string> = {
   passed: "Passed",
 };
 
+const ACCOUNTING_DOCUMENT_TYPE_LABELS: Record<AccountingDocumentType, string> = {
+  retainer: "Retainer",
+  commission: "Cash commission",
+  expense: "Expense",
+  adjustment: "Adjustment",
+};
+
+const ACCOUNTING_DOCUMENT_STATUS_LABELS: Record<AccountingDocumentStatus, string> = {
+  draft: "Draft",
+  open: "Open",
+  partially_paid: "Part paid",
+  paid: "Paid",
+  void: "Void",
+};
+
+const ACCOUNTING_LEDGER_ENTRY_TYPE_LABELS: Record<AccountingLedgerEntryType, string> = {
+  retainer_payment: "Retainer payment",
+  commission_payment: "Commission payment",
+  expense_payment: "Expense payment",
+  adjustment: "Adjustment",
+};
+
+const ACCOUNTING_DIRECTION_LABELS: Record<AccountingDirection, string> = {
+  incoming: "Incoming",
+  outgoing: "Outgoing",
+};
+
 const ENRICHMENT_KEYWORD_SEPARATOR = /[;,\n]+/;
 
 const VIEW_TITLES: Record<ActiveView, string> = {
@@ -310,6 +406,7 @@ const VIEW_TITLES: Record<ActiveView, string> = {
   pipeline: "Outreach pipeline",
   tasks: "Tasks and next steps",
   import: "Import admin",
+  accounting: "Accounting and payments",
 };
 
 const COMPANY_PAGE_SIZE_OPTIONS = [50, 100, 250, 500, "all"] as const;
@@ -348,6 +445,28 @@ function formatNumber(value: number) {
   return NUMBER_FORMATTER.format(value);
 }
 
+function formatMinorMoney(amountMinor: number, currency: string) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency,
+    currencyDisplay: "narrowSymbol",
+  }).format(amountMinor / 100);
+}
+
+function amountInputFromMinor(amountMinor: number) {
+  return (amountMinor / 100).toFixed(2);
+}
+
+function parseMoneyInput(value: string) {
+  const normalized = value.trim().replace(/,/g, "");
+  if (!/^\d+(\.\d{1,2})?$/.test(normalized)) return null;
+  return Math.round(Number(normalized) * 100);
+}
+
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function formatChangeCount(count: number) {
   return `${formatNumber(count)} pending change${count === 1 ? "" : "s"}`;
 }
@@ -364,6 +483,91 @@ function formatCompanyWebsites(company: Company) {
   return `${company.websiteDomains[0]} +${company.websiteDomains.length - 1}`;
 }
 
+function emptyAccountingData(): AccountingData {
+  return {
+    documents: [],
+    ledgerEntries: [],
+    summaries: [],
+  };
+}
+
+function withAccountingSummaries(data: AccountingData): AccountingData {
+  return {
+    ...data,
+    summaries: buildAccountingSummaries(data.documents, data.ledgerEntries),
+  };
+}
+
+function defaultAccountingDocumentDraft(): AccountingDocumentDraft {
+  return {
+    documentId: null,
+    documentType: "retainer",
+    status: "open",
+    companyId: "",
+    title: "",
+    amount: "",
+    currency: "GBP",
+    issuedOn: todayIsoDate(),
+    dueOn: "",
+    externalReference: "",
+    documentUrl: "",
+    notes: "",
+  };
+}
+
+function defaultAccountingLedgerDraft(): AccountingLedgerDraft {
+  return {
+    entryId: null,
+    documentId: "",
+    entryType: "retainer_payment",
+    direction: "incoming",
+    companyId: "",
+    amount: "",
+    currency: "GBP",
+    occurredOn: todayIsoDate(),
+    externalReference: "",
+    documentUrl: "",
+    notes: "",
+  };
+}
+
+function accountingDocumentDraftFromDocument(document: AccountingDocument): AccountingDocumentDraft {
+  return {
+    documentId: document.id,
+    documentType: document.documentType,
+    status: document.status === "void" ? "open" : document.status,
+    companyId: document.companyId ?? "",
+    title: document.title,
+    amount: amountInputFromMinor(document.amountMinor),
+    currency: document.currency,
+    issuedOn: document.issuedOn ?? "",
+    dueOn: document.dueOn ?? "",
+    externalReference: document.externalReference ?? "",
+    documentUrl: document.documentUrl ?? "",
+    notes: document.notes ?? "",
+  };
+}
+
+function accountingLedgerDraftFromEntry(entry: AccountingLedgerEntry): AccountingLedgerDraft {
+  return {
+    entryId: entry.id,
+    documentId: entry.documentId ?? "",
+    entryType: entry.entryType,
+    direction: entry.direction,
+    companyId: entry.companyId ?? "",
+    amount: amountInputFromMinor(entry.amountMinor),
+    currency: entry.currency,
+    occurredOn: entry.occurredOn,
+    externalReference: entry.externalReference ?? "",
+    documentUrl: entry.documentUrl ?? "",
+    notes: entry.notes ?? "",
+  };
+}
+
+function accountingSearchParts(values: Array<string | null | undefined>) {
+  return values.filter(Boolean).join(" ").toLowerCase();
+}
+
 function isPendingPersonChange(change: PendingChange): change is PendingChange & { type: "person"; personUpdate: PendingPersonUpdate } {
   return change.type === "person" && Boolean(change.personUpdate);
 }
@@ -375,6 +579,8 @@ function mergePendingPersonUpdate(existing: PendingPersonUpdate, next: PendingPe
     organizationId: next.organizationId,
     personId: next.personId,
     displayName: next.displayName,
+    firstName: "firstName" in next ? next.firstName : existing.firstName,
+    lastName: "lastName" in next ? next.lastName : existing.lastName,
     jobTitle: "jobTitle" in next ? next.jobTitle : existing.jobTitle,
     linkedinUrl: "linkedinUrl" in next ? next.linkedinUrl : existing.linkedinUrl,
     phone: "phone" in next ? next.phone : existing.phone,
@@ -393,19 +599,47 @@ function extractEmailsFromText(value: string) {
   return normalizePersonEmails(value.match(EMAIL_IN_TEXT_PATTERN) ?? []);
 }
 
+function normalizeSearchValue(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9@._+-]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function searchTokens(query: string) {
+  return normalizeSearchValue(query).split(" ").filter(Boolean);
+}
+
+function searchTextMatches(text: string, query: string) {
+  const tokens = searchTokens(query);
+  if (tokens.length === 0) return true;
+  return tokens.every((token) => text.includes(token));
+}
+
 function buildCompanySearchText(company: Company) {
-  return [
+  return normalizeSearchValue([
     company.name,
+    company.normalizedName,
+    company.websiteDomain,
     company.websiteDomains.join(" "),
+    company.description,
     company.country,
+    company.status,
+    company.sourceQuality,
+    company.outreachStage,
     company.categories.join(" "),
     company.tags.map((item) => item.name).join(" "),
-    company.enrichment ? [company.enrichment.industry, company.enrichment.subsector, company.enrichment.companyType, company.enrichment.keywords.join(" "), company.enrichment.summary].join(" ") : "",
-    company.investmentRelationships.map((relationship) => `${relationship.investmentStatus} ${relationship.capacityStatus} ${relationship.deals.map((deal) => deal.name).join(" ")}`).join(" "),
-    company.people.map((person) => `${person.displayName} ${person.emails.join(" ")} ${person.email ?? ""} ${person.jobTitle ?? ""}`).join(" "),
+    company.nextTask?.title,
+    company.activities.map((activity) => `${activity.type} ${activity.summary}`).join(" "),
+    company.enrichment ? [company.enrichment.industry, company.enrichment.subsector, company.enrichment.companyType, company.enrichment.keywords.join(" "), company.enrichment.summary, company.enrichment.location].join(" ") : "",
+    company.investmentRelationships.map((relationship) => `${relationship.investmentStatus} ${relationship.capacityStatus} ${relationship.notes ?? ""} ${relationship.deals.map((deal) => `${deal.name} ${deal.role ?? ""} ${deal.notes ?? ""}`).join(" ")}`).join(" "),
+    company.people.map((person) => `${person.displayName} ${person.firstName ?? ""} ${person.lastName ?? ""} ${person.emails.join(" ")} ${person.email ?? ""} ${person.jobTitle ?? ""} ${person.country ?? ""} ${person.categories.join(" ")} ${person.connectionStrength ?? ""}`).join(" "),
   ]
-    .join(" ")
-    .toLowerCase();
+    .filter(Boolean)
+    .join(" "));
 }
 
 function companyMatches(
@@ -418,7 +652,7 @@ function companyMatches(
   qualityFilters: Set<string>,
 ) {
   return (
-    (!query || text.includes(query)) &&
+    searchTextMatches(text, query) &&
     (stageFilters.size === 0 || stageFilters.has(company.outreachStage)) &&
     (countryFilters.size === 0 || (company.country ? countryFilters.has(company.country) : false)) &&
     (tagFilters.size === 0 || company.tags.some((item) => tagFilters.has(item.name))) &&
@@ -444,20 +678,23 @@ function personMatches({
   highlightFilter: string;
 }) {
   const companyText = companies.map((company) => `${company.name} ${company.websiteDomains.join(" ")} ${company.outreachStage}`).join(" ");
-  const text = [
+  const text = normalizeSearchValue([
     person.displayName,
+    person.firstName,
+    person.lastName,
     person.jobTitle,
     person.country,
+    person.connectionStrength,
     person.categories.join(" "),
     person.investmentRelationships.map((relationship) => `${relationship.investmentStatus} ${relationship.capacityStatus} ${relationship.deals.map((deal) => deal.name).join(" ")}`).join(" "),
     person.emails.join(" "),
     companyText,
   ]
-    .join(" ")
-    .toLowerCase();
+    .filter(Boolean)
+    .join(" "));
 
   return (
-    (!query || text.includes(query.toLowerCase())) &&
+    searchTextMatches(text, query) &&
     (!companyFilter || companies.some((company) => company.name === companyFilter)) &&
     (!domainFilter || person.emails.some((email) => emailDomain(email) === domainFilter)) &&
     (!stageFilter || companies.some((company) => company.outreachStage === stageFilter)) &&
@@ -890,6 +1127,8 @@ function mergePersonDetails(target: Person, source: Person, forcedId = target.id
     id: forcedId,
     sourcePersonIds: uniqueList([...personSourceIds(target), ...personSourceIds(source)]),
     displayName: target.displayName !== "Unnamed contact" ? target.displayName : source.displayName,
+    firstName: target.firstName ?? source.firstName,
+    lastName: target.lastName ?? source.lastName,
     email: target.email ?? source.email ?? emails[0] ?? null,
     emails,
     phone: target.phone ?? source.phone,
@@ -976,6 +1215,8 @@ export function CrmShell({
   const [peopleMessage, setPeopleMessage] = useState<string | null>(null);
   const [editingPersonId, setEditingPersonId] = useState<string | null>(null);
   const [editDisplayName, setEditDisplayName] = useState("");
+  const [editFirstName, setEditFirstName] = useState("");
+  const [editLastName, setEditLastName] = useState("");
   const [editEmails, setEditEmails] = useState<string[]>([]);
   const [editJobTitle, setEditJobTitle] = useState("");
   const [editLinkedinUrl, setEditLinkedinUrl] = useState("");
@@ -1006,10 +1247,29 @@ export function CrmShell({
   const [isEnriching, setIsEnriching] = useState(false);
   const [isRefreshingTable, setIsRefreshingTable] = useState(false);
   const [tagDrafts, setTagDrafts] = useState<Record<string, string>>({});
+  const [isSplittingNames, setIsSplittingNames] = useState(false);
+  const [splitNamesProgress, setSplitNamesProgress] = useState<{ total: number; completed: number; failed: number } | null>(null);
+  const [namesMessage, setNamesMessage] = useState<string | null>(null);
+  const [accountingData, setAccountingData] = useState<AccountingData>(() => initialData.accounting ?? emptyAccountingData());
+  const [accountingTab, setAccountingTab] = useState<AccountingTab>("documents");
+  const [accountingQuery, setAccountingQuery] = useState("");
+  const [accountingCompanyFilter, setAccountingCompanyFilter] = useState("");
+  const [accountingTypeFilter, setAccountingTypeFilter] = useState("");
+  const [accountingStatusFilter, setAccountingStatusFilter] = useState("");
+  const [accountingCurrencyFilter, setAccountingCurrencyFilter] = useState("");
+  const [accountingDateFrom, setAccountingDateFrom] = useState("");
+  const [accountingDateTo, setAccountingDateTo] = useState("");
+  const [accountingDocumentDraft, setAccountingDocumentDraft] = useState<AccountingDocumentDraft>(() => defaultAccountingDocumentDraft());
+  const [accountingLedgerDraft, setAccountingLedgerDraft] = useState<AccountingLedgerDraft>(() => defaultAccountingLedgerDraft());
+  const [accountingRecordActionTarget, setAccountingRecordActionTarget] = useState<AccountingRecordActionTarget | null>(null);
+  const [accountingRecordActionReason, setAccountingRecordActionReason] = useState("");
+  const [accountingMessage, setAccountingMessage] = useState<string | null>(null);
+  const [isSavingAccounting, setIsSavingAccounting] = useState(false);
   const stopBatchRef = useRef(false);
   const batchAbortControllerRef = useRef<AbortController | null>(null);
   const deferredCompanyQuery = useDeferredValue(query.trim().toLowerCase());
   const deferredPeopleQuery = useDeferredValue(peopleQuery.trim().toLowerCase());
+  const deferredAccountingQuery = useDeferredValue(accountingQuery.trim().toLowerCase());
   const showCompanyTable = !hideTable;
   const showDetailPanel = !hideDetailPanel;
 
@@ -1052,6 +1312,67 @@ export function CrmShell({
       : activeCompanyInvestment
         ? investmentDraftForRelationship(activeCompanyInvestment)
         : null;
+  const companyNameById = useMemo(() => new Map(companies.map((company) => [company.id, company.name])), [companies]);
+  const accountingCompanies = useMemo(
+    () =>
+      companies
+        .filter((company) => accountingData.documents.some((document) => document.companyId === company.id) || accountingData.ledgerEntries.some((entry) => entry.companyId === company.id))
+        .sort((left, right) => left.name.localeCompare(right.name, "en-US")),
+    [accountingData.documents, accountingData.ledgerEntries, companies],
+  );
+  const accountingCurrencies = useMemo(
+    () => [...new Set([...accountingData.documents.map((document) => document.currency), ...accountingData.ledgerEntries.map((entry) => entry.currency)])].sort(),
+    [accountingData.documents, accountingData.ledgerEntries],
+  );
+  const filteredAccountingDocuments = useMemo(
+    () =>
+      accountingData.documents.filter((document) => {
+        const dateValue = document.issuedOn ?? document.createdAt.slice(0, 10);
+        if (accountingCompanyFilter && document.companyId !== accountingCompanyFilter) return false;
+        if (accountingTypeFilter && document.documentType !== accountingTypeFilter) return false;
+        if (accountingStatusFilter && document.status !== accountingStatusFilter) return false;
+        if (accountingCurrencyFilter && document.currency !== accountingCurrencyFilter) return false;
+        if (accountingDateFrom && dateValue < accountingDateFrom) return false;
+        if (accountingDateTo && dateValue > accountingDateTo) return false;
+        if (!deferredAccountingQuery) return true;
+        const searchText = accountingSearchParts([
+          document.title,
+          document.externalReference,
+          document.notes,
+          document.currency,
+          document.companyId ? companyNameById.get(document.companyId) : "General",
+          ACCOUNTING_DOCUMENT_TYPE_LABELS[document.documentType],
+          ACCOUNTING_DOCUMENT_STATUS_LABELS[document.status],
+        ]);
+        return searchText.includes(deferredAccountingQuery);
+      }),
+    [accountingCompanyFilter, accountingCurrencyFilter, accountingData.documents, accountingDateFrom, accountingDateTo, accountingStatusFilter, accountingTypeFilter, companyNameById, deferredAccountingQuery],
+  );
+  const filteredAccountingEntries = useMemo(
+    () =>
+      accountingData.ledgerEntries.filter((entry) => {
+        if (accountingCompanyFilter && entry.companyId !== accountingCompanyFilter) return false;
+        if (accountingTypeFilter && entry.entryType !== accountingTypeFilter) return false;
+        if (accountingStatusFilter === "voided" && !entry.voidedAt) return false;
+        if (accountingStatusFilter === "active" && entry.voidedAt) return false;
+        if (accountingCurrencyFilter && entry.currency !== accountingCurrencyFilter) return false;
+        if (accountingDateFrom && entry.occurredOn < accountingDateFrom) return false;
+        if (accountingDateTo && entry.occurredOn > accountingDateTo) return false;
+        if (!deferredAccountingQuery) return true;
+        const linkedDocument = accountingData.documents.find((document) => document.id === entry.documentId);
+        const searchText = accountingSearchParts([
+          entry.externalReference,
+          entry.notes,
+          entry.currency,
+          linkedDocument?.title,
+          entry.companyId ? companyNameById.get(entry.companyId) : "General",
+          ACCOUNTING_LEDGER_ENTRY_TYPE_LABELS[entry.entryType],
+          ACCOUNTING_DIRECTION_LABELS[entry.direction],
+        ]);
+        return searchText.includes(deferredAccountingQuery);
+      }),
+    [accountingCompanyFilter, accountingCurrencyFilter, accountingData.documents, accountingData.ledgerEntries, accountingDateFrom, accountingDateTo, accountingStatusFilter, accountingTypeFilter, companyNameById, deferredAccountingQuery],
+  );
   const exportOptions = useMemo(() => contactExportValues(companies, exportCriterion), [companies, exportCriterion]);
   const exportRows = useMemo(() => filterContactExportRows(companies, exportCriterion, exportValue), [companies, exportCriterion, exportValue]);
   const countries = uniqueValues(companies, (company) => company.country);
@@ -1369,6 +1690,18 @@ export function CrmShell({
       cancelled = true;
     };
   }, [companyId, initialData.companies]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (!cancelled) setAccountingData(initialData.accounting ?? emptyAccountingData());
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialData.accounting]);
 
   useEffect(() => {
     if (!companyId) return;
@@ -2149,6 +2482,490 @@ export function CrmShell({
     setIsEnriching(false);
   }
 
+  function updateAccountingDocumentLocally(document: AccountingDocument) {
+    setAccountingData((current) =>
+      withAccountingSummaries({
+        ...current,
+        documents: current.documents.some((item) => item.id === document.id)
+          ? current.documents.map((item) => (item.id === document.id ? document : item))
+          : [document, ...current.documents],
+      }),
+    );
+  }
+
+  function updateAccountingLedgerEntryLocally(entry: AccountingLedgerEntry) {
+    setAccountingData((current) =>
+      withAccountingSummaries({
+        ...current,
+        ledgerEntries: current.ledgerEntries.some((item) => item.id === entry.id)
+          ? current.ledgerEntries.map((item) => (item.id === entry.id ? entry : item))
+          : [entry, ...current.ledgerEntries],
+      }),
+    );
+  }
+
+  function deleteAccountingDocumentLocally(documentId: string) {
+    setAccountingData((current) =>
+      withAccountingSummaries({
+        ...current,
+        documents: current.documents.filter((document) => document.id !== documentId),
+        ledgerEntries: current.ledgerEntries.map((entry) => (entry.documentId === documentId ? { ...entry, documentId: null } : entry)),
+      }),
+    );
+  }
+
+  function deleteAccountingLedgerEntryLocally(entryId: string) {
+    setAccountingData((current) =>
+      withAccountingSummaries({
+        ...current,
+        ledgerEntries: current.ledgerEntries.filter((entry) => entry.id !== entryId),
+      }),
+    );
+  }
+
+  function localAccountingDocumentFromDraft(draft: AccountingDocumentDraft, amountMinor: number): AccountingDocument {
+    const now = new Date().toISOString();
+    return {
+      id: draft.documentId ?? `local-accounting-document-${Date.now()}`,
+      companyId: draft.companyId || null,
+      documentType: draft.documentType,
+      status: draft.status,
+      title: draft.title.trim(),
+      amountMinor,
+      currency: draft.currency.trim().toUpperCase(),
+      issuedOn: draft.issuedOn || null,
+      dueOn: draft.dueOn || null,
+      externalReference: draft.externalReference.trim() || null,
+      documentUrl: draft.documentUrl.trim() || null,
+      notes: draft.notes.trim() || null,
+      createdBy: null,
+      updatedBy: null,
+      voidedAt: null,
+      voidedBy: null,
+      voidReason: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  function localAccountingLedgerEntryFromDraft(draft: AccountingLedgerDraft, amountMinor: number): AccountingLedgerEntry {
+    const now = new Date().toISOString();
+    return {
+      id: draft.entryId ?? `local-accounting-entry-${Date.now()}`,
+      documentId: draft.documentId || null,
+      companyId: draft.companyId || null,
+      entryType: draft.entryType,
+      direction: draft.direction,
+      amountMinor,
+      currency: draft.currency.trim().toUpperCase(),
+      occurredOn: draft.occurredOn,
+      externalReference: draft.externalReference.trim() || null,
+      documentUrl: draft.documentUrl.trim() || null,
+      notes: draft.notes.trim() || null,
+      createdBy: null,
+      updatedBy: null,
+      voidedAt: null,
+      voidedBy: null,
+      voidReason: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  async function saveAccountingDocument() {
+    if (!initialData.accountingAccess.canEdit || isSavingAccounting) return;
+    const amountMinor = parseMoneyInput(accountingDocumentDraft.amount);
+    if (!amountMinor) {
+      setAccountingMessage("Enter a positive amount with up to two decimals.");
+      return;
+    }
+    if ((accountingDocumentDraft.documentType === "retainer" || accountingDocumentDraft.documentType === "commission") && !accountingDocumentDraft.companyId) {
+      setAccountingMessage("Retainers and commissions must be linked to a company.");
+      return;
+    }
+
+    const currency = accountingDocumentDraft.currency.trim().toUpperCase();
+    if (!/^[A-Z]{3}$/.test(currency)) {
+      setAccountingMessage("Use a 3-letter ISO currency code.");
+      return;
+    }
+
+    setIsSavingAccounting(true);
+    setAccountingMessage(null);
+    try {
+      if (initialData.dataMode === "supabase") {
+        const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
+        if (!organizationId) {
+          setAccountingMessage("Add NEXT_PUBLIC_DEFAULT_ORG_ID before saving accounting data.");
+          return;
+        }
+
+        const result = await saveAccountingDocumentAction({
+          organizationId,
+          documentId: accountingDocumentDraft.documentId ?? undefined,
+          companyId: accountingDocumentDraft.companyId || null,
+          documentType: accountingDocumentDraft.documentType,
+          status: accountingDocumentDraft.status,
+          title: accountingDocumentDraft.title,
+          amountMinor,
+          currency,
+          issuedOn: accountingDocumentDraft.issuedOn || null,
+          dueOn: accountingDocumentDraft.dueOn || null,
+          externalReference: accountingDocumentDraft.externalReference || null,
+          documentUrl: accountingDocumentDraft.documentUrl || null,
+          notes: accountingDocumentDraft.notes || null,
+        });
+        setAccountingMessage(result.message);
+        if (result.ok && result.document) {
+          updateAccountingDocumentLocally(result.document);
+          setAccountingDocumentDraft(defaultAccountingDocumentDraft());
+        }
+        return;
+      }
+
+      updateAccountingDocumentLocally(localAccountingDocumentFromDraft(accountingDocumentDraft, amountMinor));
+      setAccountingDocumentDraft(defaultAccountingDocumentDraft());
+      setAccountingMessage("Demo accounting document saved locally.");
+    } finally {
+      setIsSavingAccounting(false);
+    }
+  }
+
+  async function saveAccountingLedgerEntry() {
+    if (!initialData.accountingAccess.canEdit || isSavingAccounting) return;
+    const amountMinor = parseMoneyInput(accountingLedgerDraft.amount);
+    if (!amountMinor) {
+      setAccountingMessage("Enter a positive amount with up to two decimals.");
+      return;
+    }
+
+    const linkedDocument = accountingData.documents.find((document) => document.id === accountingLedgerDraft.documentId);
+    const companyId = accountingLedgerDraft.companyId || linkedDocument?.companyId || "";
+    const currency = accountingLedgerDraft.currency.trim().toUpperCase();
+    if (!/^[A-Z]{3}$/.test(currency)) {
+      setAccountingMessage("Use a 3-letter ISO currency code.");
+      return;
+    }
+    if ((accountingLedgerDraft.entryType === "retainer_payment" || accountingLedgerDraft.entryType === "commission_payment") && !companyId) {
+      setAccountingMessage("Retainer and commission payments must be linked to a company.");
+      return;
+    }
+
+    setIsSavingAccounting(true);
+    setAccountingMessage(null);
+    try {
+      const draft = { ...accountingLedgerDraft, companyId, currency };
+      if (initialData.dataMode === "supabase") {
+        const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
+        if (!organizationId) {
+          setAccountingMessage("Add NEXT_PUBLIC_DEFAULT_ORG_ID before saving accounting data.");
+          return;
+        }
+
+        const result = await saveAccountingLedgerEntryAction({
+          organizationId,
+          entryId: draft.entryId ?? undefined,
+          documentId: draft.documentId || null,
+          companyId: draft.companyId || null,
+          entryType: draft.entryType,
+          direction: draft.direction,
+          amountMinor,
+          currency,
+          occurredOn: draft.occurredOn,
+          externalReference: draft.externalReference || null,
+          documentUrl: draft.documentUrl || null,
+          notes: draft.notes || null,
+        });
+        setAccountingMessage(result.message);
+        if (result.ok && result.entry) {
+          updateAccountingLedgerEntryLocally(result.entry);
+          setAccountingLedgerDraft(defaultAccountingLedgerDraft());
+        }
+        return;
+      }
+
+      updateAccountingLedgerEntryLocally(localAccountingLedgerEntryFromDraft(draft, amountMinor));
+      setAccountingLedgerDraft(defaultAccountingLedgerDraft());
+      setAccountingMessage("Demo ledger entry saved locally.");
+    } finally {
+      setIsSavingAccounting(false);
+    }
+  }
+
+  function openAccountingDocumentAction(document: AccountingDocument, action: AccountingRecordActionTarget["action"]) {
+    if (!initialData.accountingAccess.canEdit || (action === "void" && (document.status === "void" || document.voidedAt))) return;
+    setAccountingRecordActionTarget({ action, entityType: "document", id: document.id, title: document.title });
+    setAccountingRecordActionReason("");
+    setAccountingMessage(null);
+  }
+
+  function openAccountingLedgerAction(entry: AccountingLedgerEntry, action: AccountingRecordActionTarget["action"]) {
+    if (!initialData.accountingAccess.canEdit || (action === "void" && entry.voidedAt)) return;
+    const linkedDocument = accountingData.documents.find((document) => document.id === entry.documentId);
+    setAccountingRecordActionTarget({
+      action,
+      entityType: "ledger_entry",
+      id: entry.id,
+      title: linkedDocument?.title ?? entry.externalReference ?? ACCOUNTING_LEDGER_ENTRY_TYPE_LABELS[entry.entryType],
+    });
+    setAccountingRecordActionReason("");
+    setAccountingMessage(null);
+  }
+
+  function closeAccountingRecordActionDialog() {
+    setAccountingRecordActionTarget(null);
+    setAccountingRecordActionReason("");
+  }
+
+  async function confirmAccountingRecordAction() {
+    const reason = accountingRecordActionReason.trim();
+    if (!accountingRecordActionTarget || !reason) return;
+
+    const target = accountingRecordActionTarget;
+    setIsSavingAccounting(true);
+    try {
+      let ok = false;
+      if (target.entityType === "document") {
+        const document = accountingData.documents.find((item) => item.id === target.id);
+        ok = target.action === "delete" ? await deleteAccountingDocument(document, reason) : await voidAccountingDocument(document, reason);
+      } else {
+        const entry = accountingData.ledgerEntries.find((item) => item.id === target.id);
+        ok = target.action === "delete" ? await deleteAccountingLedgerEntry(entry, reason) : await voidAccountingLedgerEntry(entry, reason);
+      }
+
+      if (ok) closeAccountingRecordActionDialog();
+    } catch (error) {
+      setAccountingMessage(error instanceof Error ? error.message : `Could not ${target.action} accounting record.`);
+    } finally {
+      setIsSavingAccounting(false);
+    }
+  }
+
+  async function voidAccountingDocument(document: AccountingDocument | undefined, reason: string) {
+    if (!document || !initialData.accountingAccess.canEdit || document.status === "void" || document.voidedAt) return false;
+    const voidReason = reason.trim();
+    if (!voidReason) return false;
+
+    if (initialData.dataMode === "supabase") {
+      const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
+      if (!organizationId) {
+        setAccountingMessage("Add NEXT_PUBLIC_DEFAULT_ORG_ID before voiding accounting data.");
+        return false;
+      }
+
+      const result = await voidAccountingRecordAction({ organizationId, entityType: "document", id: document.id, reason: voidReason });
+      setAccountingMessage(result.message);
+      if (result.ok && result.document) updateAccountingDocumentLocally(result.document);
+      return result.ok;
+    }
+
+    updateAccountingDocumentLocally({
+      ...document,
+      status: "void",
+      voidedAt: new Date().toISOString(),
+      voidReason,
+      updatedAt: new Date().toISOString(),
+    });
+    setAccountingMessage("Demo accounting document voided locally.");
+    return true;
+  }
+
+  async function voidAccountingLedgerEntry(entry: AccountingLedgerEntry | undefined, reason: string) {
+    if (!entry || !initialData.accountingAccess.canEdit || entry.voidedAt) return false;
+    const voidReason = reason.trim();
+    if (!voidReason) return false;
+
+    if (initialData.dataMode === "supabase") {
+      const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
+      if (!organizationId) {
+        setAccountingMessage("Add NEXT_PUBLIC_DEFAULT_ORG_ID before voiding accounting data.");
+        return false;
+      }
+
+      const result = await voidAccountingRecordAction({ organizationId, entityType: "ledger_entry", id: entry.id, reason: voidReason });
+      setAccountingMessage(result.message);
+      if (result.ok && result.entry) updateAccountingLedgerEntryLocally(result.entry);
+      return result.ok;
+    }
+
+    updateAccountingLedgerEntryLocally({
+      ...entry,
+      voidedAt: new Date().toISOString(),
+      voidReason,
+      updatedAt: new Date().toISOString(),
+    });
+    setAccountingMessage("Demo ledger entry voided locally.");
+    return true;
+  }
+
+  async function deleteAccountingDocument(document: AccountingDocument | undefined, reason: string) {
+    if (!document || !initialData.accountingAccess.canEdit) return false;
+    const deleteReason = reason.trim();
+    if (!deleteReason) return false;
+
+    if (initialData.dataMode === "supabase") {
+      const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
+      if (!organizationId) {
+        setAccountingMessage("Add NEXT_PUBLIC_DEFAULT_ORG_ID before deleting accounting data.");
+        return false;
+      }
+
+      const result = await deleteAccountingRecordAction({ organizationId, entityType: "document", id: document.id, reason: deleteReason });
+      setAccountingMessage(result.message);
+      if (result.ok) {
+        deleteAccountingDocumentLocally(document.id);
+        if (accountingDocumentDraft.documentId === document.id) setAccountingDocumentDraft(defaultAccountingDocumentDraft());
+        if (accountingLedgerDraft.documentId === document.id) setAccountingLedgerDraft((current) => ({ ...current, documentId: "" }));
+      }
+      return result.ok;
+    }
+
+    deleteAccountingDocumentLocally(document.id);
+    if (accountingDocumentDraft.documentId === document.id) setAccountingDocumentDraft(defaultAccountingDocumentDraft());
+    if (accountingLedgerDraft.documentId === document.id) setAccountingLedgerDraft((current) => ({ ...current, documentId: "" }));
+    setAccountingMessage("Demo accounting document deleted locally.");
+    return true;
+  }
+
+  async function deleteAccountingLedgerEntry(entry: AccountingLedgerEntry | undefined, reason: string) {
+    if (!entry || !initialData.accountingAccess.canEdit) return false;
+    const deleteReason = reason.trim();
+    if (!deleteReason) return false;
+
+    if (initialData.dataMode === "supabase") {
+      const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
+      if (!organizationId) {
+        setAccountingMessage("Add NEXT_PUBLIC_DEFAULT_ORG_ID before deleting accounting data.");
+        return false;
+      }
+
+      const result = await deleteAccountingRecordAction({ organizationId, entityType: "ledger_entry", id: entry.id, reason: deleteReason });
+      setAccountingMessage(result.message);
+      if (result.ok) {
+        deleteAccountingLedgerEntryLocally(entry.id);
+        if (accountingLedgerDraft.entryId === entry.id) setAccountingLedgerDraft(defaultAccountingLedgerDraft());
+      }
+      return result.ok;
+    }
+
+    deleteAccountingLedgerEntryLocally(entry.id);
+    if (accountingLedgerDraft.entryId === entry.id) setAccountingLedgerDraft(defaultAccountingLedgerDraft());
+    setAccountingMessage("Demo ledger entry deleted locally.");
+    return true;
+  }
+
+  function handleLedgerDocumentChange(documentId: string) {
+    const document = accountingData.documents.find((item) => item.id === documentId);
+    setAccountingLedgerDraft((current) => ({
+      ...current,
+      documentId,
+      companyId: document?.companyId ?? current.companyId,
+      amount: document ? amountInputFromMinor(document.amountMinor) : current.amount,
+      currency: document?.currency ?? current.currency,
+      entryType:
+        document?.documentType === "retainer"
+          ? "retainer_payment"
+          : document?.documentType === "commission"
+            ? "commission_payment"
+            : document?.documentType === "expense"
+              ? "expense_payment"
+              : current.entryType,
+      direction: document?.documentType === "expense" ? "outgoing" : document ? "incoming" : current.direction,
+    }));
+  }
+
+  async function splitPeopleNames() {
+    const targetPeople = peopleDirectory.map((row) => row.person).filter((person) => !person.firstName);
+    if (targetPeople.length === 0) {
+      setNamesMessage("No contacts to split.");
+      return;
+    }
+
+    setIsSplittingNames(true);
+    setNamesMessage(null);
+    stopBatchRef.current = false;
+    let completed = 0;
+    let failed = 0;
+    setSplitNamesProgress({ total: targetPeople.length, completed, failed });
+
+    for (const person of targetPeople) {
+      if (stopBatchRef.current) break;
+
+      setNamesMessage(`Splitting ${completed + failed + 1} of ${targetPeople.length}: ${person.displayName}`);
+      setSplitNamesProgress({ total: targetPeople.length, completed, failed });
+
+      try {
+        const response = await fetch("/api/enrichment/split-name", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ displayName: person.displayName }),
+        });
+
+        if (!response.ok) {
+          failed += 1;
+          continue;
+        }
+
+        const { firstName, lastName } = (await response.json()) as { firstName: string; lastName: string };
+        const sourceIds = personSourceIds(person);
+        updatePersonLocally(sourceIds, { firstName, lastName });
+
+        const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
+        if (organizationId && isUuid(person.id)) {
+          queuePendingChange({
+            key: `person:${person.id}`,
+            label: "Contact name split",
+            type: "person",
+            personUpdate: {
+              organizationId,
+              personId: person.id,
+              displayName: person.displayName,
+              firstName,
+              lastName,
+              categories: person.categories,
+            },
+            record: {
+              kind: "person",
+              key: `person:${person.id}`,
+              label: "Contact name split",
+              personUpdate: {
+                organizationId,
+                personId: person.id,
+                displayName: person.displayName,
+                firstName,
+                lastName,
+                categories: person.categories,
+              },
+            },
+            run: () =>
+              initialData.authMode === "supabase" && organizationId && isUuid(person.id)
+                ? updatePersonAction({
+                  organizationId,
+                  personId: person.id,
+                  displayName: person.displayName,
+                  firstName,
+                  lastName,
+                  categories: person.categories,
+                  emails: [],
+                })
+                : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
+          });
+        }
+
+        completed += 1;
+      } catch {
+        if (stopBatchRef.current) break;
+        failed += 1;
+      }
+
+      setSplitNamesProgress({ total: targetPeople.length, completed, failed });
+    }
+
+    setNamesMessage(`Name splitting done: ${completed} split${failed ? `, ${failed} failed` : ""}. Queue changes before pushing.`);
+    setSplitNamesProgress(null);
+    setIsSplittingNames(false);
+  }
+
   function updateRelationshipInList(relationships: InvestmentRelationship[], relationship: InvestmentRelationship) {
     const existingIndex = relationships.findIndex((item) => relationshipMatches(item, relationship.companyId, relationship.personId) || item.id === relationship.id);
     if (existingIndex === -1) return [...relationships, relationship];
@@ -2355,7 +3172,7 @@ export function CrmShell({
     });
   }
 
-  function updatePersonLocally(targetPersonIds: string[], updates: Partial<Pick<Person, "displayName" | "emails" | "jobTitle" | "linkedinUrl" | "phone" | "country" | "categories" | "investmentRelationships">>) {
+  function updatePersonLocally(targetPersonIds: string[], updates: Partial<Pick<Person, "displayName" | "firstName" | "lastName" | "emails" | "jobTitle" | "linkedinUrl" | "phone" | "country" | "categories" | "investmentRelationships">>) {
     const personIdSet = new Set(targetPersonIds);
     updateCompanies((company) => ({
       ...company,
@@ -2364,6 +3181,8 @@ export function CrmShell({
           ? {
               ...person,
               ...(updates.displayName !== undefined ? { displayName: updates.displayName } : {}),
+              ...(updates.firstName !== undefined ? { firstName: updates.firstName } : {}),
+              ...(updates.lastName !== undefined ? { lastName: updates.lastName } : {}),
               ...(updates.emails !== undefined ? { email: updates.emails[0] ?? null, emails: updates.emails } : {}),
               ...(updates.jobTitle !== undefined ? { jobTitle: updates.jobTitle } : {}),
               ...(updates.linkedinUrl !== undefined ? { linkedinUrl: updates.linkedinUrl } : {}),
@@ -2458,6 +3277,8 @@ export function CrmShell({
     setPersonEditMessage(null);
     setEditingPersonId(person.id);
     setEditDisplayName(person.displayName);
+    setEditFirstName(person.firstName ?? "");
+    setEditLastName(person.lastName ?? "");
     setEditEmails(person.emails.length > 0 ? [...person.emails] : []);
     setEditJobTitle(person.jobTitle ?? "");
     setEditLinkedinUrl(person.linkedinUrl ?? "");
@@ -2471,6 +3292,8 @@ export function CrmShell({
   function closePersonEdit() {
     setEditingPersonId(null);
     setEditDisplayName("");
+    setEditFirstName("");
+    setEditLastName("");
     setEditEmails([]);
     setEditJobTitle("");
     setEditLinkedinUrl("");
@@ -2518,6 +3341,8 @@ export function CrmShell({
     if (!editingPerson) return;
 
     const displayName = editDisplayName.trim();
+    const firstName = editFirstName.trim() || null;
+    const lastName = editLastName.trim() || null;
     const emails = normalizePersonEmails(editEmails);
     const categories = normalizePersonCategories([...editCategories, editCategoryInput]);
     const jobTitle = editJobTitle.trim() || null;
@@ -2537,13 +3362,15 @@ export function CrmShell({
       return;
     }
 
-    const updates = { displayName, emails, jobTitle, linkedinUrl, phone, country: countryValue, categories };
+    const updates = { displayName, firstName, lastName, emails, jobTitle, linkedinUrl, phone, country: countryValue, categories };
     const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
     const personUpdate = organizationId && isUuid(editingPerson.id)
       ? {
           organizationId,
           personId: editingPerson.id,
           displayName,
+          firstName,
+          lastName,
           emails,
           jobTitle,
           linkedinUrl,
@@ -2589,6 +3416,8 @@ export function CrmShell({
           organizationId: "",
           personId: editingPerson.id,
           displayName,
+          firstName,
+          lastName,
           emails,
           jobTitle,
           linkedinUrl,
@@ -2604,6 +3433,8 @@ export function CrmShell({
             organizationId,
             personId: editingPerson.id,
             displayName,
+            firstName,
+            lastName,
             emails,
             jobTitle,
             linkedinUrl,
@@ -2806,6 +3637,7 @@ export function CrmShell({
           <NavButton active={activeView === "pipeline"} icon={<CircleDot size={18} />} label="Pipeline" onClick={() => setActiveView("pipeline")} />
           <NavButton active={activeView === "tasks"} icon={<ListChecks size={18} />} label="Tasks" onClick={() => setActiveView("tasks")} />
           <NavButton active={activeView === "import"} icon={<FileSpreadsheet size={18} />} label="Import Admin" onClick={() => setActiveView("import")} />
+          <NavButton active={activeView === "accounting"} icon={<CreditCard size={18} />} label="Accounting" onClick={() => setActiveView("accounting")} />
         </nav>
         <div className="sidebar-footer">
           <span className={clsx("mode-dot", isSignedIn ? "signed-in" : "signed-out")} />
@@ -3550,6 +4382,14 @@ export function CrmShell({
                 <button type="button" className="secondary-button" onClick={() => exportPeople(filteredPeopleDirectory)}>
                   <Download size={15} /> Export people
                 </button>
+                <button
+                  type="button"
+                  className={clsx("secondary-button", isSplittingNames && "running")}
+                  onClick={isSplittingNames ? () => { stopBatchRef.current = true; } : splitPeopleNames}
+                  disabled={isSplittingNames || !initialData.localEnrichmentEnabled || !isSignedIn}
+                >
+                  <UserRound size={15} /> {isSplittingNames ? "Stopping..." : "Split names"}
+                </button>
               </div>
             </div>
             {isDemoData ? (
@@ -3559,6 +4399,20 @@ export function CrmShell({
               </div>
             ) : null}
             {incorrectEmailMessage ? <div className="data-notice"><Flag size={16} /><span>{incorrectEmailMessage}</span></div> : null}
+            {isSplittingNames && splitNamesProgress ? (
+              <div className="batch-progress-panel" aria-live="polite">
+                <div>
+                  <strong>Splitting names</strong>
+                  <span>
+                    {formatNumber(splitNamesProgress.completed)} done
+                    {splitNamesProgress.failed ? `, ${formatNumber(splitNamesProgress.failed)} failed` : ""}
+                    {" "}of {formatNumber(splitNamesProgress.total)}
+                  </span>
+                </div>
+                <progress value={splitNamesProgress.completed + splitNamesProgress.failed} max={splitNamesProgress.total} />
+              </div>
+            ) : null}
+            {namesMessage && !isSplittingNames ? <div className="data-notice"><Flag size={16} /><span>{namesMessage}</span></div> : null}
             <div className="people-filterbar">
               <label className="search-box">
                 <Search size={16} />
@@ -3885,6 +4739,423 @@ export function CrmShell({
           </section>
         ) : null}
 
+        {activeView === "accounting" ? (
+          <section className="view-surface accounting-view">
+            <div className="surface-header">
+              <div>
+                <p className="eyebrow">Accounting</p>
+                <h2>{initialData.accountingAccess.canView ? "Retainers, commissions, expenses, and cash" : "Restricted finance area"}</h2>
+                <span>
+                  {initialData.accountingAccess.canView
+                    ? `${formatNumber(accountingData.documents.length)} documents, ${formatNumber(accountingData.ledgerEntries.length)} ledger entries`
+                    : "Finance allowlist access required"}
+                </span>
+              </div>
+              {initialData.accountingAccess.canView ? (
+                <span className={clsx("accounting-role-pill", initialData.accountingAccess.canEdit && "can-edit")}>
+                  {initialData.accountingAccess.role ?? "viewer"}
+                </span>
+              ) : null}
+            </div>
+
+            {!initialData.accountingAccess.canView ? (
+              <div className="locked-panel">
+                <CreditCard size={24} />
+                <div>
+                  <strong>Accounting is only available to finance users.</strong>
+                  <span>Your account can use the CRM, but it is not on the accounting allowlist.</span>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="accounting-summary-grid">
+                  {accountingData.summaries.map((summary) => (
+                    <article key={summary.currency} className="accounting-summary-card">
+                      <div>
+                        <span>{summary.currency}</span>
+                        <strong>{formatMinorMoney(summary.netCashMinor, summary.currency)}</strong>
+                      </div>
+                      <dl>
+                        <div>
+                          <dt>Retainers</dt>
+                          <dd>{formatMinorMoney(summary.retainerIncomeMinor, summary.currency)}</dd>
+                        </div>
+                        <div>
+                          <dt>Commissions</dt>
+                          <dd>{formatMinorMoney(summary.commissionIncomeMinor, summary.currency)}</dd>
+                        </div>
+                        <div>
+                          <dt>Expenses</dt>
+                          <dd>{formatMinorMoney(summary.expensesMinor, summary.currency)}</dd>
+                        </div>
+                        <div>
+                          <dt>Outstanding</dt>
+                          <dd>{formatMinorMoney(summary.outstandingMinor, summary.currency)}</dd>
+                        </div>
+                      </dl>
+                    </article>
+                  ))}
+                  {accountingData.summaries.length === 0 ? (
+                    <article className="accounting-summary-card empty">
+                      <strong>No accounting totals yet.</strong>
+                      <span>Create documents and ledger entries to populate currency summaries.</span>
+                    </article>
+                  ) : null}
+                </div>
+
+                <div className="accounting-toolbar">
+                  <div className="accounting-tabs" role="tablist" aria-label="Accounting sections">
+                    <button
+                      type="button"
+                      className={clsx(accountingTab === "documents" && "active")}
+                      onClick={() => {
+                        setAccountingTab("documents");
+                        setAccountingTypeFilter("");
+                        setAccountingStatusFilter("");
+                      }}
+                    >
+                      Documents
+                    </button>
+                    <button
+                      type="button"
+                      className={clsx(accountingTab === "ledger" && "active")}
+                      onClick={() => {
+                        setAccountingTab("ledger");
+                        setAccountingTypeFilter("");
+                        setAccountingStatusFilter("");
+                      }}
+                    >
+                      Ledger
+                    </button>
+                  </div>
+                  <label className="search-box accounting-search">
+                    <Search size={16} />
+                    <input value={accountingQuery} onChange={(event) => setAccountingQuery(event.target.value)} placeholder="Search accounting" />
+                  </label>
+                </div>
+
+                <div className="accounting-filters">
+                  <FilterSelect value={accountingCompanyFilter} onChange={setAccountingCompanyFilter} label="Company" options={accountingCompanies.map((company) => company.name)} optionValues={accountingCompanies.map((company) => company.id)} />
+                  <FilterSelect
+                    value={accountingTypeFilter}
+                    onChange={setAccountingTypeFilter}
+                    label="Type"
+                    options={accountingTab === "documents" ? ACCOUNTING_DOCUMENT_TYPES.map((type) => ACCOUNTING_DOCUMENT_TYPE_LABELS[type]) : ACCOUNTING_LEDGER_ENTRY_TYPES.map((type) => ACCOUNTING_LEDGER_ENTRY_TYPE_LABELS[type])}
+                    optionValues={accountingTab === "documents" ? [...ACCOUNTING_DOCUMENT_TYPES] : [...ACCOUNTING_LEDGER_ENTRY_TYPES]}
+                  />
+                  <FilterSelect
+                    value={accountingStatusFilter}
+                    onChange={setAccountingStatusFilter}
+                    label="Status"
+                    options={accountingTab === "documents" ? ACCOUNTING_DOCUMENT_STATUSES.map((status) => ACCOUNTING_DOCUMENT_STATUS_LABELS[status]) : ["Active", "Voided"]}
+                    optionValues={accountingTab === "documents" ? [...ACCOUNTING_DOCUMENT_STATUSES] : ["active", "voided"]}
+                  />
+                  <FilterSelect value={accountingCurrencyFilter} onChange={setAccountingCurrencyFilter} label="Currency" options={accountingCurrencies} />
+                  <label className="select-filter accounting-date-filter">
+                    <span>From</span>
+                    <input type="date" value={accountingDateFrom} onChange={(event) => setAccountingDateFrom(event.target.value)} />
+                  </label>
+                  <label className="select-filter accounting-date-filter">
+                    <span>To</span>
+                    <input type="date" value={accountingDateTo} onChange={(event) => setAccountingDateTo(event.target.value)} />
+                  </label>
+                </div>
+
+                {accountingMessage ? (
+                  <div className="data-notice">
+                    <Flag size={16} />
+                    <span>{accountingMessage}</span>
+                  </div>
+                ) : null}
+
+                {accountingTab === "documents" ? (
+                  <div className="accounting-grid">
+                    <form
+                      className="accounting-form"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        saveAccountingDocument();
+                      }}
+                    >
+                      <div className="accounting-form-header">
+                        <h2>{accountingDocumentDraft.documentId ? "Edit document" : "New document"}</h2>
+                        {accountingDocumentDraft.documentId ? (
+                          <button type="button" className="text-button compact" onClick={() => setAccountingDocumentDraft(defaultAccountingDocumentDraft())}>
+                            Clear
+                          </button>
+                        ) : null}
+                      </div>
+                      <label>
+                        <span>Type</span>
+                        <select value={accountingDocumentDraft.documentType} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, documentType: event.target.value as AccountingDocumentType }))}>
+                          {ACCOUNTING_DOCUMENT_TYPES.map((type) => (
+                            <option key={type} value={type}>
+                              {ACCOUNTING_DOCUMENT_TYPE_LABELS[type]}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span>Status</span>
+                        <select value={accountingDocumentDraft.status} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, status: event.target.value as AccountingDocumentDraft["status"] }))}>
+                          {ACCOUNTING_DOCUMENT_STATUSES.filter((status) => status !== "void").map((status) => (
+                            <option key={status} value={status}>
+                              {ACCOUNTING_DOCUMENT_STATUS_LABELS[status]}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span>Company</span>
+                        <select value={accountingDocumentDraft.companyId} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, companyId: event.target.value }))}>
+                          <option value="">General</option>
+                          {companies.map((company) => (
+                            <option key={company.id} value={company.id}>
+                              {company.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span>Title</span>
+                        <input value={accountingDocumentDraft.title} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, title: event.target.value }))} required />
+                      </label>
+                      <div className="accounting-form-row">
+                        <label>
+                          <span>Amount</span>
+                          <input inputMode="decimal" value={accountingDocumentDraft.amount} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, amount: event.target.value }))} placeholder="0.00" required />
+                        </label>
+                        <label>
+                          <span>Currency</span>
+                          <input value={accountingDocumentDraft.currency} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, currency: event.target.value.toUpperCase() }))} maxLength={3} required />
+                        </label>
+                      </div>
+                      <div className="accounting-form-row">
+                        <label>
+                          <span>Issued</span>
+                          <input type="date" value={accountingDocumentDraft.issuedOn} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, issuedOn: event.target.value }))} />
+                        </label>
+                        <label>
+                          <span>Due</span>
+                          <input type="date" value={accountingDocumentDraft.dueOn} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, dueOn: event.target.value }))} />
+                        </label>
+                      </div>
+                      <label>
+                        <span>Reference</span>
+                        <input value={accountingDocumentDraft.externalReference} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, externalReference: event.target.value }))} />
+                      </label>
+                      <label>
+                        <span>Document URL</span>
+                        <input value={accountingDocumentDraft.documentUrl} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, documentUrl: event.target.value }))} />
+                      </label>
+                      <label>
+                        <span>Notes</span>
+                        <textarea value={accountingDocumentDraft.notes} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, notes: event.target.value }))} rows={3} />
+                      </label>
+                      <button type="submit" className="primary-button" disabled={!initialData.accountingAccess.canEdit || isSavingAccounting}>
+                        <Check size={15} /> {isSavingAccounting ? "Saving..." : "Save document"}
+                      </button>
+                    </form>
+
+                    <div className="accounting-table-wrap">
+                      <table className="accounting-table">
+                        <thead>
+                          <tr>
+                            <th>Document</th>
+                            <th>Company</th>
+                            <th>Status</th>
+                            <th>Amount</th>
+                            <th>Issued</th>
+                            <th />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredAccountingDocuments.map((document) => (
+                            <tr key={document.id} className={clsx(document.status === "void" && "voided")}>
+                              <td>
+                                <strong>{document.title}</strong>
+                                <span>{ACCOUNTING_DOCUMENT_TYPE_LABELS[document.documentType]}{document.externalReference ? ` - ${document.externalReference}` : ""}</span>
+                              </td>
+                              <td>{document.companyId ? companyNameById.get(document.companyId) ?? "Unknown company" : "General"}</td>
+                              <td>
+                                <span className={clsx("accounting-status-pill", document.status)}>{ACCOUNTING_DOCUMENT_STATUS_LABELS[document.status]}</span>
+                              </td>
+                              <td>{formatMinorMoney(document.amountMinor, document.currency)}</td>
+                              <td>{document.issuedOn ? formatDate(document.issuedOn) : "No date"}</td>
+                              <td>
+                                <div className="accounting-row-actions">
+                                  <button type="button" className="text-button compact" onClick={() => setAccountingDocumentDraft(accountingDocumentDraftFromDocument(document))} disabled={document.status === "void"}>
+                                    <Pencil size={13} /> Edit
+                                  </button>
+                                  <button type="button" className="text-button compact danger" onClick={() => openAccountingDocumentAction(document, "void")} disabled={!initialData.accountingAccess.canEdit || document.status === "void"}>
+                                    Void
+                                  </button>
+                                  <button type="button" className="text-button compact danger" onClick={() => openAccountingDocumentAction(document, "delete")} disabled={!initialData.accountingAccess.canEdit}>
+                                    Delete
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {filteredAccountingDocuments.length === 0 ? <p className="empty-state">No accounting documents match these filters.</p> : null}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="accounting-grid">
+                    <form
+                      className="accounting-form"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        saveAccountingLedgerEntry();
+                      }}
+                    >
+                      <div className="accounting-form-header">
+                        <h2>{accountingLedgerDraft.entryId ? "Edit ledger entry" : "New ledger entry"}</h2>
+                        {accountingLedgerDraft.entryId ? (
+                          <button type="button" className="text-button compact" onClick={() => setAccountingLedgerDraft(defaultAccountingLedgerDraft())}>
+                            Clear
+                          </button>
+                        ) : null}
+                      </div>
+                      <label>
+                        <span>Document</span>
+                        <select value={accountingLedgerDraft.documentId} onChange={(event) => handleLedgerDocumentChange(event.target.value)}>
+                          <option value="">No document</option>
+                          {accountingData.documents.filter((document) => document.status !== "void").map((document) => (
+                            <option key={document.id} value={document.id}>
+                              {document.title}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span>Type</span>
+                        <select
+                          value={accountingLedgerDraft.entryType}
+                          onChange={(event) => {
+                            const nextType = event.target.value as AccountingLedgerEntryType;
+                            setAccountingLedgerDraft((current) => ({
+                              ...current,
+                              entryType: nextType,
+                              direction: nextType === "expense_payment" ? "outgoing" : nextType === "adjustment" ? current.direction : "incoming",
+                            }));
+                          }}
+                        >
+                          {ACCOUNTING_LEDGER_ENTRY_TYPES.map((type) => (
+                            <option key={type} value={type}>
+                              {ACCOUNTING_LEDGER_ENTRY_TYPE_LABELS[type]}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span>Direction</span>
+                        <select value={accountingLedgerDraft.direction} onChange={(event) => setAccountingLedgerDraft((current) => ({ ...current, direction: event.target.value as AccountingDirection }))}>
+                          {ACCOUNTING_DIRECTIONS.map((direction) => (
+                            <option key={direction} value={direction}>
+                              {ACCOUNTING_DIRECTION_LABELS[direction]}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span>Company</span>
+                        <select value={accountingLedgerDraft.companyId} onChange={(event) => setAccountingLedgerDraft((current) => ({ ...current, companyId: event.target.value }))}>
+                          <option value="">General</option>
+                          {companies.map((company) => (
+                            <option key={company.id} value={company.id}>
+                              {company.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="accounting-form-row">
+                        <label>
+                          <span>Amount</span>
+                          <input inputMode="decimal" value={accountingLedgerDraft.amount} onChange={(event) => setAccountingLedgerDraft((current) => ({ ...current, amount: event.target.value }))} placeholder="0.00" required />
+                        </label>
+                        <label>
+                          <span>Currency</span>
+                          <input value={accountingLedgerDraft.currency} onChange={(event) => setAccountingLedgerDraft((current) => ({ ...current, currency: event.target.value.toUpperCase() }))} maxLength={3} required />
+                        </label>
+                      </div>
+                      <label>
+                        <span>Date</span>
+                        <input type="date" value={accountingLedgerDraft.occurredOn} onChange={(event) => setAccountingLedgerDraft((current) => ({ ...current, occurredOn: event.target.value }))} required />
+                      </label>
+                      <label>
+                        <span>Reference</span>
+                        <input value={accountingLedgerDraft.externalReference} onChange={(event) => setAccountingLedgerDraft((current) => ({ ...current, externalReference: event.target.value }))} />
+                      </label>
+                      <label>
+                        <span>Document URL</span>
+                        <input value={accountingLedgerDraft.documentUrl} onChange={(event) => setAccountingLedgerDraft((current) => ({ ...current, documentUrl: event.target.value }))} />
+                      </label>
+                      <label>
+                        <span>Notes</span>
+                        <textarea value={accountingLedgerDraft.notes} onChange={(event) => setAccountingLedgerDraft((current) => ({ ...current, notes: event.target.value }))} rows={3} />
+                      </label>
+                      <button type="submit" className="primary-button" disabled={!initialData.accountingAccess.canEdit || isSavingAccounting}>
+                        <Check size={15} /> {isSavingAccounting ? "Saving..." : "Save ledger entry"}
+                      </button>
+                    </form>
+
+                    <div className="accounting-table-wrap">
+                      <table className="accounting-table">
+                        <thead>
+                          <tr>
+                            <th>Entry</th>
+                            <th>Company</th>
+                            <th>Direction</th>
+                            <th>Amount</th>
+                            <th>Date</th>
+                            <th />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredAccountingEntries.map((entry) => {
+                            const linkedDocument = accountingData.documents.find((document) => document.id === entry.documentId);
+                            return (
+                              <tr key={entry.id} className={clsx(entry.voidedAt && "voided")}>
+                                <td>
+                                  <strong>{ACCOUNTING_LEDGER_ENTRY_TYPE_LABELS[entry.entryType]}</strong>
+                                  <span>{linkedDocument?.title ?? entry.externalReference ?? "Ledger entry"}</span>
+                                </td>
+                                <td>{entry.companyId ? companyNameById.get(entry.companyId) ?? "Unknown company" : "General"}</td>
+                                <td>
+                                  <span className={clsx("accounting-direction-pill", entry.direction)}>{ACCOUNTING_DIRECTION_LABELS[entry.direction]}</span>
+                                </td>
+                                <td>{formatMinorMoney(entry.amountMinor, entry.currency)}</td>
+                                <td>{formatDate(entry.occurredOn)}</td>
+                                <td>
+                                  <div className="accounting-row-actions">
+                                    <button type="button" className="text-button compact" onClick={() => setAccountingLedgerDraft(accountingLedgerDraftFromEntry(entry))} disabled={Boolean(entry.voidedAt)}>
+                                      <Pencil size={13} /> Edit
+                                    </button>
+                                    <button type="button" className="text-button compact danger" onClick={() => openAccountingLedgerAction(entry, "void")} disabled={!initialData.accountingAccess.canEdit || Boolean(entry.voidedAt)}>
+                                      Void
+                                    </button>
+                                    <button type="button" className="text-button compact danger" onClick={() => openAccountingLedgerAction(entry, "delete")} disabled={!initialData.accountingAccess.canEdit}>
+                                      Delete
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                      {filteredAccountingEntries.length === 0 ? <p className="empty-state">No ledger entries match these filters.</p> : null}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        ) : null}
+
         {activeView === "tasks" ? (
           <section className="view-surface">
             <div className="surface-header">
@@ -3968,6 +5239,58 @@ export function CrmShell({
           </div>
         ) : null}
 
+        {accountingRecordActionTarget ? (
+          <div className="modal-backdrop" role="presentation">
+            <section className="contact-editor accounting-void-dialog" role="dialog" aria-modal="true" aria-labelledby="accounting-void-title">
+              <form
+                className="contact-editor-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  confirmAccountingRecordAction();
+                }}
+              >
+                <div className="contact-editor-header">
+                  <div>
+                    <p className="eyebrow">Accounting</p>
+                    <h2 id="accounting-void-title">{accountingRecordActionTarget.action === "delete" ? "Delete accounting record" : "Void accounting record"}</h2>
+                  </div>
+                  <button type="button" className="icon-button" onClick={closeAccountingRecordActionDialog} title="Close accounting action dialog" disabled={isSavingAccounting}>
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <p className="accounting-void-summary">
+                  {accountingRecordActionTarget.action === "delete" ? "Permanently delete" : "Void"} {accountingRecordActionTarget.entityType === "document" ? "document" : "ledger entry"}{" "}
+                  <strong>{accountingRecordActionTarget.title}</strong>.{" "}
+                  {accountingRecordActionTarget.action === "delete" ? "A snapshot and reason stay in the audit trail." : "The record stays in the audit trail."}
+                </p>
+
+                <label className="editor-field">
+                  {accountingRecordActionTarget.action === "delete" ? "Delete reason" : "Void reason"}
+                  <textarea
+                    value={accountingRecordActionReason}
+                    onChange={(event) => setAccountingRecordActionReason(event.target.value)}
+                    rows={4}
+                    maxLength={1000}
+                    required
+                    autoFocus
+                    placeholder={accountingRecordActionTarget.action === "delete" ? "Reason for deleting this mistaken record" : "Reason for voiding this record"}
+                  />
+                </label>
+
+                <div className="contact-editor-footer">
+                  <button type="button" className="secondary-button" onClick={closeAccountingRecordActionDialog} disabled={isSavingAccounting}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="primary-button danger" disabled={accountingRecordActionReason.trim().length === 0 || isSavingAccounting}>
+                    <Check size={15} /> {isSavingAccounting ? (accountingRecordActionTarget.action === "delete" ? "Deleting..." : "Voiding...") : accountingRecordActionTarget.action === "delete" ? "Delete record" : "Void record"}
+                  </button>
+                </div>
+              </form>
+            </section>
+          </div>
+        ) : null}
+
         {editingPerson ? (
           <div className="modal-backdrop" role="presentation">
             <section className="contact-editor" role="dialog" aria-modal="true" aria-labelledby="contact-editor-title">
@@ -3994,6 +5317,14 @@ export function CrmShell({
                 </label>
 
                 <div className="editor-grid">
+                  <label className="editor-field">
+                    First name
+                    <input value={editFirstName} onChange={(event) => setEditFirstName(event.target.value)} placeholder="First name" />
+                  </label>
+                  <label className="editor-field">
+                    Last name
+                    <input value={editLastName} onChange={(event) => setEditLastName(event.target.value)} placeholder="Last name" />
+                  </label>
                   <label className="editor-field">
                     Job title
                     <input value={editJobTitle} onChange={(event) => setEditJobTitle(event.target.value)} placeholder="Partner" />
@@ -4246,12 +5577,14 @@ function FilterSelect({
   onChange,
   label,
   options,
+  optionValues,
 }: {
   icon?: React.ReactNode;
   value: string;
   onChange: (value: string) => void;
   label: string;
   options: readonly string[];
+  optionValues?: readonly string[];
 }) {
   return (
     <label className="select-filter">
@@ -4259,8 +5592,8 @@ function FilterSelect({
       <span>{label}</span>
       <select value={value} onChange={(event) => onChange(event.target.value)}>
         <option value="">All</option>
-        {options.map((option) => (
-          <option key={option} value={option}>
+        {options.map((option, index) => (
+          <option key={optionValues?.[index] ?? option} value={optionValues?.[index] ?? option}>
             {option}
           </option>
         ))}

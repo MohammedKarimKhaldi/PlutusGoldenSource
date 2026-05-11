@@ -28,6 +28,8 @@ function person(overrides: Partial<Person> = {}): Person {
     id: "person-1",
     sourcePersonIds: ["person-1"],
     displayName: "Jane Investor",
+    firstName: null,
+    lastName: null,
     email: "jane@biocapital.example",
     emails: ["jane@biocapital.example"],
     phone: "+44 1",

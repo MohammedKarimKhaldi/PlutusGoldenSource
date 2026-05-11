@@ -2,24 +2,47 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { buildAccountingSummaries } from "@/lib/accounting";
 import { normalizeCompanyWebsites } from "@/lib/company-websites";
 import { localEnrichmentEnabled } from "@/lib/enrichment-config";
 import { mockDashboardData } from "@/lib/mock-data";
 import { normalizePersonName } from "@/lib/import/normalization";
 import { createSupabaseServerClient, hasSupabaseBrowserConfig } from "@/lib/supabase/server";
-import type { Activity, Company, CompanyEnrichment, DashboardData, ImportSummary, InvestmentDeal, InvestmentRelationship, Person, Tag, Task } from "@/lib/types";
+import type {
+  AccountingAccess,
+  AccountingData,
+  AccountingDocument,
+  AccountingLedgerEntry,
+  AccountingRole,
+  Activity,
+  Company,
+  CompanyEnrichment,
+  DashboardData,
+  ImportSummary,
+  InvestmentDeal,
+  InvestmentRelationship,
+  Person,
+  Tag,
+  Task,
+} from "@/lib/types";
 
 type SupabaseServerClient = NonNullable<Awaited<ReturnType<typeof createSupabaseServerClient>>>;
 type SupabaseError = { code?: string; details?: string | null; message: string };
 type SupabasePage<T> = PromiseLike<{ data: T[] | null; error: SupabaseError | null }>;
 
 const PAGE_SIZE = 1000;
-const DASHBOARD_CACHE_VERSION = 3;
+const DASHBOARD_CACHE_VERSION = 4;
 const DASHBOARD_CACHE_REVALIDATE_MS = 5 * 60 * 1000;
 const DASHBOARD_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const dashboardMemoryCache = new Map<string, { savedAt: number; data: DashboardData }>();
 const dashboardRefreshes = new Set<string>();
 const dashboardCacheDir = join(process.cwd(), ".next", "cache", "golden-source-dashboard");
+const NO_ACCOUNTING_ACCESS: AccountingAccess = {
+  canView: false,
+  canEdit: false,
+  canAdmin: false,
+  role: null,
+};
 
 type StoredDashboardCache = {
   version: number;
@@ -55,6 +78,8 @@ type CompanyTagRow = {
 type PersonRelation = {
   id: string;
   display_name: string;
+  first_name?: string | null;
+  last_name?: string | null;
   linkedin_url: string | null;
   job_title: string | null;
   phone_numbers: string | null;
@@ -134,6 +159,53 @@ type InvestmentDealParticipantRow = {
   role: string | null;
   notes: string | null;
   investment_deals: InvestmentDealRelation | InvestmentDealRelation[] | null;
+};
+
+type AccountingMemberRow = {
+  role: AccountingRole;
+};
+
+type AccountingDocumentRow = {
+  id: string;
+  company_id: string | null;
+  document_type: AccountingDocument["documentType"];
+  status: AccountingDocument["status"];
+  title: string;
+  amount_minor: number;
+  currency: string;
+  issued_on: string | null;
+  due_on: string | null;
+  external_reference: string | null;
+  document_url: string | null;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  voided_at: string | null;
+  voided_by: string | null;
+  void_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type AccountingLedgerEntryRow = {
+  id: string;
+  document_id: string | null;
+  company_id: string | null;
+  entry_type: AccountingLedgerEntry["entryType"];
+  direction: AccountingLedgerEntry["direction"];
+  amount_minor: number;
+  currency: string;
+  occurred_on: string;
+  external_reference: string | null;
+  document_url: string | null;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  voided_at: string | null;
+  voided_by: string | null;
+  void_reason: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 type DashboardRows = {
@@ -257,6 +329,123 @@ function mapCompanyEnrichment(row: CompanyEnrichmentRow): CompanyEnrichment {
     reviewedAt: row.reviewed_at,
     updatedAt: row.updated_at,
   };
+}
+
+function accountingAccessFromRole(role: AccountingRole | null): AccountingAccess {
+  return {
+    canView: Boolean(role),
+    canEdit: role === "editor" || role === "admin",
+    canAdmin: role === "admin",
+    role,
+  };
+}
+
+function isMissingAccountingTable(error: SupabaseError) {
+  return error.code === "42P01" || error.code === "PGRST205";
+}
+
+function mapAccountingDocument(row: AccountingDocumentRow): AccountingDocument {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    documentType: row.document_type,
+    status: row.status,
+    title: row.title,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency,
+    issuedOn: row.issued_on,
+    dueOn: row.due_on,
+    externalReference: row.external_reference,
+    documentUrl: row.document_url,
+    notes: row.notes,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+    voidedAt: row.voided_at,
+    voidedBy: row.voided_by,
+    voidReason: row.void_reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapAccountingLedgerEntry(row: AccountingLedgerEntryRow): AccountingLedgerEntry {
+  return {
+    id: row.id,
+    documentId: row.document_id,
+    companyId: row.company_id,
+    entryType: row.entry_type,
+    direction: row.direction,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency,
+    occurredOn: row.occurred_on,
+    externalReference: row.external_reference,
+    documentUrl: row.document_url,
+    notes: row.notes,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+    voidedAt: row.voided_at,
+    voidedBy: row.voided_by,
+    voidReason: row.void_reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function loadAccountingForUser(supabase: SupabaseServerClient, organizationId: string, userId: string): Promise<{ access: AccountingAccess; accounting: AccountingData | null }> {
+  const memberResult = await supabase
+    .from("accounting_members")
+    .select("role")
+    .eq("organization_id", organizationId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (memberResult.error) {
+    if (!isMissingAccountingTable(memberResult.error)) {
+      console.warn("Could not load accounting access", memberResult.error.message);
+    }
+    return { access: NO_ACCOUNTING_ACCESS, accounting: null };
+  }
+
+  const role = (memberResult.data as AccountingMemberRow | null)?.role ?? null;
+  const access = accountingAccessFromRole(role);
+  if (!access.canView) return { access, accounting: null };
+
+  try {
+    const [documentRows, ledgerRows] = await Promise.all([
+      fetchPaged<AccountingDocumentRow>("accounting documents", (from, to) =>
+        supabase
+          .from("accounting_documents")
+          .select("id,company_id,document_type,status,title,amount_minor,currency,issued_on,due_on,external_reference,document_url,notes,created_by,updated_by,voided_at,voided_by,void_reason,created_at,updated_at")
+          .eq("organization_id", organizationId)
+          .order("issued_on", { ascending: false, nullsFirst: false })
+          .order("created_at", { ascending: false })
+          .range(from, to),
+      ),
+      fetchPaged<AccountingLedgerEntryRow>("accounting ledger entries", (from, to) =>
+        supabase
+          .from("accounting_ledger_entries")
+          .select("id,document_id,company_id,entry_type,direction,amount_minor,currency,occurred_on,external_reference,document_url,notes,created_by,updated_by,voided_at,voided_by,void_reason,created_at,updated_at")
+          .eq("organization_id", organizationId)
+          .order("occurred_on", { ascending: false })
+          .order("created_at", { ascending: false })
+          .range(from, to),
+      ),
+    ]);
+
+    const documents = documentRows.map(mapAccountingDocument);
+    const ledgerEntries = ledgerRows.map(mapAccountingLedgerEntry);
+    return {
+      access,
+      accounting: {
+        documents,
+        ledgerEntries,
+        summaries: buildAccountingSummaries(documents, ledgerEntries),
+      },
+    };
+  } catch (error) {
+    console.warn("Could not load accounting data", error instanceof Error ? error.message : error);
+    return { access, accounting: { documents: [], ledgerEntries: [], summaries: [] } };
+  }
 }
 
 function buildInvestmentRelationships(rows: DashboardRows) {
@@ -413,6 +602,8 @@ function buildCompanies(rows: DashboardRows): Company[] {
             id: person.id,
             sourcePersonIds: [person.id],
             displayName: person.display_name,
+            firstName: person.first_name ?? null,
+            lastName: person.last_name ?? null,
             email: emails[0] ?? null,
             emails,
             phone: person.phone_numbers,
@@ -576,13 +767,15 @@ async function loadDashboardRows(supabase: SupabaseServerClient, organizationId:
 async function fetchDashboardDataFromSupabase({
   supabase,
   organizationId,
+  userId,
   currentUserName,
 }: {
   supabase: SupabaseServerClient;
   organizationId: string;
+  userId: string;
   currentUserName: string;
 }): Promise<DashboardData> {
-  const rows = await loadDashboardRows(supabase, organizationId);
+  const [rows, accountingResult] = await Promise.all([loadDashboardRows(supabase, organizationId), loadAccountingForUser(supabase, organizationId, userId)]);
   const importStats = rows.importStats;
 
   return {
@@ -593,6 +786,8 @@ async function fetchDashboardDataFromSupabase({
     companies: buildCompanies(rows),
     tags: rows.tags,
     tasks: rows.taskRows.map(mapTask),
+    accountingAccess: accountingResult.access,
+    accounting: accountingResult.accounting,
     importSummary: {
       totalRows: rows.importRowCount ?? importStats?.totalRows ?? 0,
       rawRows: importStats?.rawRows ?? 0,
@@ -609,17 +804,19 @@ function refreshDashboardCacheInBackground({
   cacheKey,
   supabase,
   organizationId,
+  userId,
   currentUserName,
 }: {
   cacheKey: string;
   supabase: SupabaseServerClient;
   organizationId: string;
+  userId: string;
   currentUserName: string;
 }) {
   if (dashboardRefreshes.has(cacheKey)) return;
   dashboardRefreshes.add(cacheKey);
 
-  void fetchDashboardDataFromSupabase({ supabase, organizationId, currentUserName })
+  void fetchDashboardDataFromSupabase({ supabase, organizationId, userId, currentUserName })
     .then((data) => writeDashboardCache(cacheKey, data))
     .catch((error) => {
       console.warn("Could not refresh dashboard cache", error instanceof Error ? error.message : error);
@@ -661,6 +858,8 @@ export async function getDashboardData(): Promise<DashboardData> {
       authMode: "supabase",
       dataMode: "demo",
       localEnrichmentEnabled: localEnrichmentEnabled(),
+      accountingAccess: NO_ACCOUNTING_ACCESS,
+      accounting: null,
       currentUserName: user.email ?? "Signed in",
       dataWarning: "Add NEXT_PUBLIC_DEFAULT_ORG_ID to load Supabase contacts.",
     };
@@ -673,7 +872,7 @@ export async function getDashboardData(): Promise<DashboardData> {
   if (cached) {
     const isFresh = Date.now() - cached.savedAt < DASHBOARD_CACHE_REVALIDATE_MS;
     if (!isFresh) {
-      refreshDashboardCacheInBackground({ cacheKey, supabase, organizationId, currentUserName });
+      refreshDashboardCacheInBackground({ cacheKey, supabase, organizationId, userId: user.id, currentUserName });
     }
 
     return {
@@ -685,7 +884,7 @@ export async function getDashboardData(): Promise<DashboardData> {
   }
 
   try {
-    const data = await fetchDashboardDataFromSupabase({ supabase, organizationId, currentUserName });
+    const data = await fetchDashboardDataFromSupabase({ supabase, organizationId, userId: user.id, currentUserName });
     await writeDashboardCache(cacheKey, data);
     return data;
   } catch (error) {
@@ -697,6 +896,8 @@ export async function getDashboardData(): Promise<DashboardData> {
       authMode: "supabase",
       dataMode: "demo",
       localEnrichmentEnabled: localEnrichmentEnabled(),
+      accountingAccess: NO_ACCOUNTING_ACCESS,
+      accounting: null,
       currentUserName: user.email ?? "Signed in",
       dataWarning: `Could not load Supabase contacts: ${message}`,
     };

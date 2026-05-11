@@ -2,7 +2,17 @@ import { z } from "zod";
 
 import { normalizeCompanyWebsites } from "./company-websites";
 import { isValidPersonEmail, normalizePersonCategories, normalizePersonEmails } from "./person-update";
-import { CAPACITY_STATUSES, ENRICHMENT_STATUSES, INVESTMENT_DEAL_STATUSES, INVESTMENT_STATUSES, OUTREACH_STAGES } from "./types";
+import {
+  ACCOUNTING_DIRECTIONS,
+  ACCOUNTING_DOCUMENT_STATUSES,
+  ACCOUNTING_DOCUMENT_TYPES,
+  ACCOUNTING_LEDGER_ENTRY_TYPES,
+  CAPACITY_STATUSES,
+  ENRICHMENT_STATUSES,
+  INVESTMENT_DEAL_STATUSES,
+  INVESTMENT_STATUSES,
+  OUTREACH_STAGES,
+} from "./types";
 
 const personEmailsSchema = z
   .array(z.string().max(320))
@@ -55,6 +65,8 @@ export const personUpdateSchema = z.object({
   organizationId: z.string().uuid(),
   personId: z.string().uuid(),
   displayName: z.string().trim().min(1).max(240),
+  firstName: z.string().trim().max(120).nullable().optional(),
+  lastName: z.string().trim().max(120).nullable().optional(),
   emails: personEmailsSchema.optional().default([]),
   jobTitle: z.string().trim().max(240).nullable().optional(),
   linkedinUrl: z.string().trim().max(1000).nullable().optional(),
@@ -158,6 +170,20 @@ export const mergeCompaniesSchema = z
   });
 
 const nullableUuidSchema = z.string().uuid().nullable().optional();
+const moneyMinorSchema = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+const currencySchema = z
+  .string()
+  .trim()
+  .transform((value) => value.toUpperCase())
+  .pipe(z.string().regex(/^[A-Z]{3}$/, "Use a 3-letter ISO currency code."));
+const nullableTrimmedTextSchema = (max: number) =>
+  z
+    .string()
+    .trim()
+    .max(max)
+    .nullable()
+    .optional()
+    .transform((value) => value || null);
 
 export const companyEnrichmentUpdateSchema = z.object({
   organizationId: z.string().uuid(),
@@ -217,4 +243,85 @@ export const investmentDealStatusUpdateSchema = z.object({
   dealId: z.string().uuid(),
   status: z.enum(INVESTMENT_DEAL_STATUSES),
   note: z.string().trim().max(4000).nullable().optional(),
+});
+
+export const accountingDocumentSchema = z
+  .object({
+    organizationId: z.string().uuid(),
+    documentId: z.string().uuid().optional(),
+    companyId: nullableUuidSchema,
+    documentType: z.enum(ACCOUNTING_DOCUMENT_TYPES),
+    status: z.enum(ACCOUNTING_DOCUMENT_STATUSES).default("open"),
+    title: z.string().trim().min(1).max(240),
+    amountMinor: moneyMinorSchema,
+    currency: currencySchema,
+    issuedOn: z.string().date().nullable().optional(),
+    dueOn: z.string().date().nullable().optional(),
+    externalReference: nullableTrimmedTextSchema(240),
+    documentUrl: nullableTrimmedTextSchema(1000),
+    notes: nullableTrimmedTextSchema(4000),
+  })
+  .superRefine((value, ctx) => {
+    if ((value.documentType === "retainer" || value.documentType === "commission") && !value.companyId) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Retainers and commissions must be linked to a company.",
+        path: ["companyId"],
+      });
+    }
+  });
+
+export const accountingLedgerEntrySchema = z
+  .object({
+    organizationId: z.string().uuid(),
+    entryId: z.string().uuid().optional(),
+    documentId: nullableUuidSchema,
+    companyId: nullableUuidSchema,
+    entryType: z.enum(ACCOUNTING_LEDGER_ENTRY_TYPES),
+    direction: z.enum(ACCOUNTING_DIRECTIONS),
+    amountMinor: moneyMinorSchema,
+    currency: currencySchema,
+    occurredOn: z.string().date(),
+    externalReference: nullableTrimmedTextSchema(240),
+    documentUrl: nullableTrimmedTextSchema(1000),
+    notes: nullableTrimmedTextSchema(4000),
+  })
+  .superRefine((value, ctx) => {
+    if ((value.entryType === "retainer_payment" || value.entryType === "commission_payment") && !value.companyId) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Retainer and commission payments must be linked to a company.",
+        path: ["companyId"],
+      });
+    }
+
+    if ((value.entryType === "retainer_payment" || value.entryType === "commission_payment") && value.direction !== "incoming") {
+      ctx.addIssue({
+        code: "custom",
+        message: "Retainer and commission payments must be incoming.",
+        path: ["direction"],
+      });
+    }
+
+    if (value.entryType === "expense_payment" && value.direction !== "outgoing") {
+      ctx.addIssue({
+        code: "custom",
+        message: "Expense payments must be outgoing.",
+        path: ["direction"],
+      });
+    }
+  });
+
+export const accountingVoidSchema = z.object({
+  organizationId: z.string().uuid(),
+  entityType: z.enum(["document", "ledger_entry"]),
+  id: z.string().uuid(),
+  reason: z.string().trim().min(1).max(1000),
+});
+
+export const accountingDeleteSchema = z.object({
+  organizationId: z.string().uuid(),
+  entityType: z.enum(["document", "ledger_entry"]),
+  id: z.string().uuid(),
+  reason: z.string().trim().min(1).max(1000),
 });
