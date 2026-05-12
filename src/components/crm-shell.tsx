@@ -26,13 +26,28 @@ import {
   Search,
   Star,
   Tags,
-  Trash2,
   Upload,
-  UserRound,
   UsersRound,
   X,
 } from "lucide-react";
 import clsx from "clsx";
+
+import {
+  Metric,
+  FilterSelect,
+  MultiFilterSelect,
+  NavButton,
+  formatDate,
+  formatNumber,
+  formatMinorMoney,
+  amountInputFromMinor,
+  parseMoneyInput,
+  todayIsoDate,
+  formatChangeCount,
+  normalizeSearchValue,
+  searchTokens,
+  searchTextMatches,
+} from "@/components/shared";
 
 import {
   addActivityAction,
@@ -47,7 +62,6 @@ import {
   moveStageAction,
   renameCompanyTagAction,
   refreshDashboardAction,
-  signOut,
   updateCompanyAction,
   updateCompanyEnrichmentAction,
   updateInvestmentDealStatusAction,
@@ -59,6 +73,18 @@ import {
 import { buildAccountingSummaries } from "@/lib/accounting";
 import { normalizeCompanyWebsites } from "@/lib/company-websites";
 import { FundraisingView } from "@/components/fundraising-view";
+import { Sidebar } from "@/components/views/sidebar";
+import { CrmTopbar } from "@/components/views/crm-topbar";
+import { PipelineStrip } from "@/components/views/pipeline-strip";
+import { PipelineView } from "@/components/views/pipeline-view";
+import { PeopleView } from "@/components/views/people-view";
+import { TagsView } from "@/components/views/tags-view";
+import { TasksView } from "@/components/views/tasks-view";
+import { ImportView } from "@/components/views/import-view";
+import { SyncDock } from "@/components/views/sync-dock";
+import { AccountingView } from "@/components/views/accounting-view";
+import { AccountingVoidDialog } from "@/components/views/accounting-void-dialog";
+import { ContactEditor } from "@/components/views/contact-editor";
 import { buildDealPipelineRows, groupDealPipelineRows, type DealPipelineRow } from "@/lib/deal-pipeline";
 import { DEFAULT_COMPANY_TAG_COLOR } from "@/lib/enrichment/company-tags";
 import {
@@ -425,54 +451,12 @@ const DEBUG_DRAFT_RECORD_KEY = "current";
 type CompanyPageSize = (typeof COMPANY_PAGE_SIZE_OPTIONS)[number];
 type PeoplePageSize = (typeof PEOPLE_PAGE_SIZE_OPTIONS)[number];
 
-const NUMBER_FORMATTER = new Intl.NumberFormat("en-US");
-const DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  timeZone: "UTC",
-});
-
 function uniqueValues(companies: Company[], selector: (company: Company) => string | null) {
   return [...new Set(companies.map(selector).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b, "en-US"));
 }
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
-
-function formatDate(value: string | null) {
-  if (!value) return "No activity";
-  return DATE_FORMATTER.format(new Date(value));
-}
-
-function formatNumber(value: number) {
-  return NUMBER_FORMATTER.format(value);
-}
-
-function formatMinorMoney(amountMinor: number, currency: string) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-    currencyDisplay: "narrowSymbol",
-  }).format(amountMinor / 100);
-}
-
-function amountInputFromMinor(amountMinor: number) {
-  return (amountMinor / 100).toFixed(2);
-}
-
-function parseMoneyInput(value: string) {
-  const normalized = value.trim().replace(/,/g, "");
-  if (!/^\d+(\.\d{1,2})?$/.test(normalized)) return null;
-  return Math.round(Number(normalized) * 100);
-}
-
-function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function formatChangeCount(count: number) {
-  return `${formatNumber(count)} pending change${count === 1 ? "" : "s"}`;
 }
 
 function formatDealStatusSummary(dealName: string, fromStatus: InvestmentDealStatus, toStatus: InvestmentDealStatus) {
@@ -601,26 +585,6 @@ function emailDomain(email: string) {
 
 function extractEmailsFromText(value: string) {
   return normalizePersonEmails(value.match(EMAIL_IN_TEXT_PATTERN) ?? []);
-}
-
-function normalizeSearchValue(value: string) {
-  return value
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9@._+-]+/g, " ")
-    .trim()
-    .replace(/\s+/g, " ");
-}
-
-function searchTokens(query: string) {
-  return normalizeSearchValue(query).split(" ").filter(Boolean);
-}
-
-function searchTextMatches(text: string, query: string) {
-  const tokens = searchTokens(query);
-  if (tokens.length === 0) return true;
-  return tokens.every((token) => text.includes(token));
 }
 
 function buildCompanySearchText(company: Company) {
@@ -3674,69 +3638,10 @@ export function CrmShell({
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-mark">GS</span>
-          <div>
-            <strong>Golden Source</strong>
-            <span>Outreach CRM</span>
-          </div>
-        </div>
-        <nav className="nav-list" aria-label="Primary">
-          <NavButton active={activeView === "companies"} icon={<Building2 size={18} />} label="Companies" onClick={() => setActiveView("companies")} />
-          <NavButton active={activeView === "people"} icon={<UsersRound size={18} />} label="People" onClick={() => setActiveView("people")} />
-          <NavButton active={activeView === "tags"} icon={<Tags size={18} />} label="Tags" onClick={() => setActiveView("tags")} />
-          <NavButton active={activeView === "pipeline"} icon={<CircleDot size={18} />} label="Pipeline" onClick={() => setActiveView("pipeline")} />
-          <NavButton active={activeView === "clients"} icon={<Handshake size={18} />} label="Fundraising clients" onClick={() => setActiveView("clients")} />
-          <NavButton active={activeView === "tasks"} icon={<ListChecks size={18} />} label="Tasks" onClick={() => setActiveView("tasks")} />
-          <NavButton active={activeView === "import"} icon={<FileSpreadsheet size={18} />} label="Import Admin" onClick={() => setActiveView("import")} />
-          <NavButton active={activeView === "accounting"} icon={<CreditCard size={18} />} label="Accounting" onClick={() => setActiveView("accounting")} />
-        </nav>
-        <div className="sidebar-footer">
-          <span className={clsx("mode-dot", isSignedIn ? "signed-in" : "signed-out")} />
-          <div>
-            <strong>{authLabel}</strong>
-            <span>{authDetail}</span>
-          </div>
-        </div>
-      </aside>
+      <Sidebar activeView={activeView} setActiveView={setActiveView} isSignedIn={isSignedIn} authLabel={authLabel} authDetail={authDetail} />
 
       <main className={clsx("workspace", activeView === "companies" && showCompanyTable && !showDetailPanel && "companies-workspace")}>
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">Private team workspace</p>
-            <h1>{VIEW_TITLES[activeView]}</h1>
-          </div>
-          <div className="topbar-actions">
-            <button type="button" className={clsx("secondary-button", debugMode && "debug-toggle-active")} onClick={toggleDebugMode}>
-              <FlaskConical size={16} /> {debugMode ? "Debug on" : "Debug off"}
-            </button>
-            {debugMode ? (
-              <button type="button" className="secondary-button" onClick={resetDebugDraft}>
-                <Trash2 size={16} /> Reset draft
-              </button>
-            ) : null}
-            {isSignedIn ? (
-              <div className="auth-status" aria-label={`Signed in as ${initialData.currentUserName}`}>
-                <span>
-                  <UserRound size={16} /> {initialData.currentUserName}
-                </span>
-                <form action={signOut}>
-                  <button className="secondary-button" type="submit">
-                    Sign out
-                  </button>
-                </form>
-              </div>
-            ) : (
-              <a className="secondary-button" href="/login">
-                <UserRound size={16} /> Sign in
-              </a>
-            )}
-            <button className="primary-button" type="button">
-              <Upload size={16} /> Import XLSX
-            </button>
-          </div>
-        </header>
+        <CrmTopbar activeView={activeView} debugMode={debugMode} toggleDebugMode={toggleDebugMode} resetDebugDraft={resetDebugDraft} isSignedIn={isSignedIn} currentUserName={initialData.currentUserName} />
 
         {debugMode ? (
           <div className="debug-banner" aria-live="polite">
@@ -3761,23 +3666,7 @@ export function CrmShell({
           <Metric label="Review queue" value={formatNumber(initialData.importSummary.suspiciousMerges)} tone="warn" />
         </section>
 
-        <section className="pipeline-strip" aria-label="Pipeline stages">
-          {pipelineCounts.map((item) => (
-            <button
-              key={item.stage}
-              type="button"
-              className={clsx("pipeline-pill", stageFilters.has(item.stage) && "active")}
-              onClick={() => {
-                toggleCompanyFilter(setStageFilters, item.stage);
-                setActiveView("companies");
-              }}
-              title={`Filter ${item.stage}`}
-            >
-              <span>{item.stage}</span>
-              <strong>{item.count}</strong>
-            </button>
-          ))}
-        </section>
+        <PipelineStrip pipelineCounts={pipelineCounts} stageFilters={stageFilters} onStageClick={(stage) => { toggleCompanyFilter(setStageFilters, stage); setActiveView("companies"); }} />
 
         {activeView === "companies" ? (
           <section className={clsx("content-grid", !showCompanyTable && "detail-only", !showDetailPanel && "table-only")}>
@@ -4414,382 +4303,70 @@ export function CrmShell({
         ) : null}
 
         {activeView === "people" ? (
-          <section className="view-surface">
-            <div className="surface-header">
-              <div>
-                <p className="eyebrow">People</p>
-                <h2>{formatNumber(filteredPeopleDirectory.length)} of {formatNumber(peopleDirectory.length)} contacts</h2>
-              </div>
-              <div className="surface-actions">
-                <label className="secondary-button file-button">
-                  <Upload size={15} /> Tag incorrect emails
-                  <input
-                    type="file"
-                    accept=".csv,text/csv"
-                    onChange={(event) => {
-                      handleIncorrectEmailCsvUpload(event.currentTarget.files?.[0] ?? null);
-                      event.currentTarget.value = "";
-                    }}
-                  />
-                </label>
-                <button type="button" className="secondary-button" onClick={() => exportPeople(filteredPeopleDirectory)}>
-                  <Download size={15} /> Export people
-                </button>
-                <button
-                  type="button"
-                  className={clsx("secondary-button", isSplittingNames && "running")}
-                  onClick={isSplittingNames ? () => { stopBatchRef.current = true; } : splitPeopleNames}
-                  disabled={isSplittingNames || !initialData.localEnrichmentEnabled || !isSignedIn}
-                >
-                  <UserRound size={15} /> {isSplittingNames ? "Stopping..." : "Split names"}
-                </button>
-              </div>
-            </div>
-            {isDemoData ? (
-              <div className="data-notice">
-                <Flag size={16} />
-                <span>{initialData.dataWarning ?? "Demo contacts are loaded."}</span>
-              </div>
-            ) : null}
-            {incorrectEmailMessage ? <div className="data-notice"><Flag size={16} /><span>{incorrectEmailMessage}</span></div> : null}
-            {isSplittingNames && splitNamesProgress ? (
-              <div className="batch-progress-panel" aria-live="polite">
-                <div>
-                  <strong>Splitting names</strong>
-                  <span>
-                    {formatNumber(splitNamesProgress.completed)} done
-                    {splitNamesProgress.failed ? `, ${formatNumber(splitNamesProgress.failed)} failed` : ""}
-                    {" "}of {formatNumber(splitNamesProgress.total)}
-                  </span>
-                </div>
-                <progress value={splitNamesProgress.completed + splitNamesProgress.failed} max={splitNamesProgress.total} />
-              </div>
-            ) : null}
-            {namesMessage && !isSplittingNames ? <div className="data-notice"><Flag size={16} /><span>{namesMessage}</span></div> : null}
-            <div className="people-filterbar">
-              <label className="search-box">
-                <Search size={16} />
-                <input
-                  value={peopleQuery}
-                  onChange={(event) => {
-                    setPeoplePage(1);
-                    setPeopleQuery(event.target.value);
-                  }}
-                  placeholder="Search people, emails, titles, companies"
-                />
-              </label>
-              <FilterSelect
-                value={peopleCompany}
-                onChange={(value) => {
-                  setPeoplePage(1);
-                  setPeopleCompany(value);
-                }}
-                label="Company"
-                options={peopleCompanyNames}
-              />
-              <FilterSelect
-                value={peopleDomain}
-                onChange={(value) => {
-                  setPeoplePage(1);
-                  setPeopleDomain(value);
-                }}
-                label="Email domain"
-                options={peopleEmailDomains}
-              />
-              <FilterSelect
-                value={peopleStage}
-                onChange={(value) => {
-                  setPeoplePage(1);
-                  setPeopleStage(value);
-                }}
-                label="Stage"
-                options={OUTREACH_STAGES}
-              />
-              <FilterSelect
-                value={peopleHighlight}
-                onChange={(value) => {
-                  setPeoplePage(1);
-                  setPeopleHighlight(value);
-                }}
-                label="Highlight"
-                options={["Highlighted", "Not highlighted"]}
-              />
-            </div>
-            {personMergeTarget ? (
-              <div className="people-merge-panel">
-                <div className="people-merge-header">
-                  <div>
-                    <strong>Keep {personMergeTarget.person.displayName}</strong>
-                    <span>Search for the duplicate person whose emails and history should move onto this record.</span>
-                  </div>
-                  <button type="button" className="secondary-button" onClick={closeManualMerge}>
-                    Cancel
-                  </button>
-                </div>
-                <label className="search-box">
-                  <Search size={16} />
-                  <input value={personMergeQuery} onChange={(event) => setPersonMergeQuery(event.target.value)} placeholder="Search duplicate by name, email, company, or LinkedIn" />
-                </label>
-                <div className="people-merge-list">
-                  {personMergeCandidates.map(({ person, companies }) => (
-                    <article key={person.id} className="merge-candidate-row">
-                      <div>
-                        <strong>{person.displayName}</strong>
-                        <span>{companies.map((company) => company.name).join(", ")} • {person.jobTitle ?? person.email ?? "No title"}</span>
-                      </div>
-                      <div className="email-chip-list">
-                        {person.emails.slice(0, 2).map((email) => (
-                          <span key={email} className="email-chip" title={email}>
-                            {email}
-                          </span>
-                        ))}
-                        {person.emails.length > 2 ? <span className="email-more">+{person.emails.length - 2}</span> : null}
-                      </div>
-                      <button type="button" className="text-button" onClick={() => handleManualMerge(person.id)}>
-                        Merge into keeper
-                      </button>
-                    </article>
-                  ))}
-                  {personMergeCandidates.length === 0 ? <p className="empty-state">No matching duplicate people found.</p> : null}
-                </div>
-              </div>
-            ) : null}
-            {peopleMessage ? <div className="data-notice"><Flag size={16} /><span>{peopleMessage}</span></div> : null}
-            <div className="people-countbar">
-              <span>
-                Showing {formatNumber(peopleStart)}-{formatNumber(peopleEnd)} of {formatNumber(filteredPeopleDirectory.length)}
-              </span>
-              <div className="people-pager">
-                <label className="select-filter">
-                  <span>Show</span>
-                  <select
-                    value={String(peoplePageSize)}
-                    onChange={(event) => {
-                      const nextValue = event.target.value;
-                      setPeoplePage(1);
-                      setPeoplePageSize(nextValue === "all" ? "all" : (Number(nextValue) as PeoplePageSize));
-                    }}
-                  >
-                    {PEOPLE_PAGE_SIZE_OPTIONS.map((option) => (
-                      <option key={String(option)} value={String(option)}>
-                        {option === "all" ? "All" : option}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown size={14} />
-                </label>
-                <button type="button" className="pager-button" disabled={effectivePeoplePage <= 1 || peoplePageSize === "all"} onClick={() => setPeoplePage((current) => Math.max(1, current - 1))}>
-                  Previous
-                </button>
-                <span>
-                  Page {formatNumber(effectivePeoplePage)} / {formatNumber(peopleTotalPages)}
-                </span>
-                <button
-                  type="button"
-                  className="pager-button"
-                  disabled={effectivePeoplePage >= peopleTotalPages || peoplePageSize === "all"}
-                  onClick={() => setPeoplePage((current) => Math.min(peopleTotalPages, current + 1))}
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-            <div className="people-directory">
-              {visiblePeopleDirectory.map(({ person, company, companies }) => (
-                <article key={person.id} className="directory-row">
-                  <button
-                    type="button"
-                    className={clsx("icon-button", person.highlighted && "active")}
-                    onClick={() => {
-                      setActiveCompanyId(company.id);
-                      toggleHighlight(company.id, person);
-                    }}
-                    title={person.highlighted ? "Remove highlight" : "Highlight person"}
-                  >
-                    <Star size={16} fill={person.highlighted ? "currentColor" : "none"} />
-                  </button>
-                  <div>
-                    <strong>{person.displayName}</strong>
-                    <span>{person.jobTitle ?? person.email ?? "No title"}</span>
-                    {person.categories.length > 0 ? (
-                      <div className="contact-chip-list">
-                        {person.categories.slice(0, 3).map((category) => (
-                          <span key={category} className="contact-chip">
-                            {category}
-                          </span>
-                        ))}
-                        {person.categories.length > 3 ? <span className="email-more">+{person.categories.length - 3}</span> : null}
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="email-chip-list">
-                    {person.emails.length ? (
-                      person.emails.slice(0, 3).map((email) => (
-                        <a key={email} className={clsx("email-chip", incorrectEmails.has(email.toLowerCase()) && "incorrect")} href={`mailto:${email}`} title={email}>
-                          {email}
-                        </a>
-                      ))
-                    ) : (
-                      <span className="muted-cell">No email</span>
-                    )}
-                    {person.emails.length > 3 ? <span className="email-more">+{person.emails.length - 3}</span> : null}
-                  </div>
-                  <div className="directory-actions">
-                    <button type="button" className="text-button" onClick={() => startPersonEdit(person)}>
-                      <Pencil size={14} /> Edit
-                    </button>
-                    <button type="button" className="text-button" onClick={() => openCompany(company.id)}>
-                      {companies.length === 1 ? company.name : `${company.name} +${companies.length - 1}`}
-                    </button>
-                    <button type="button" className="text-button" onClick={() => startManualMerge(person.id, person.displayName)}>
-                      Link emails
-                    </button>
-                  </div>
-                  <span className="stage-badge">{company.outreachStage}</span>
-                </article>
-              ))}
-              {filteredPeopleDirectory.length === 0 ? <p className="empty-state">No people match these filters.</p> : null}
-            </div>
-          </section>
+          <PeopleView
+            filteredDirectory={filteredPeopleDirectory}
+            directory={peopleDirectory}
+            visibleDirectory={visiblePeopleDirectory}
+            query={peopleQuery}
+            company={peopleCompany}
+            domain={peopleDomain}
+            stage={peopleStage}
+            highlight={peopleHighlight}
+            pageSize={peoplePageSize}
+            page={peoplePage}
+            peopleStart={peopleStart}
+            peopleEnd={peopleEnd}
+            effectivePage={effectivePeoplePage}
+            totalPages={peopleTotalPages}
+            personMergeTarget={personMergeTarget}
+            personMergeQuery={personMergeQuery}
+            personMergeCandidates={personMergeCandidates}
+            peopleMessage={peopleMessage}
+            incorrectEmailMessage={incorrectEmailMessage}
+            incorrectEmails={incorrectEmails}
+            namesMessage={namesMessage}
+            isSplittingNames={isSplittingNames}
+            splitNamesProgress={splitNamesProgress}
+            companyNames={peopleCompanyNames}
+            emailDomains={peopleEmailDomains}
+            isDemoData={isDemoData}
+            dataWarning={initialData.dataWarning ?? null}
+            localEnrichmentEnabled={initialData.localEnrichmentEnabled}
+            isSignedIn={isSignedIn}
+            onQueryChange={(value) => { setPeoplePage(1); setPeopleQuery(value); }}
+            onCompanyChange={(value) => { setPeoplePage(1); setPeopleCompany(value); }}
+            onDomainChange={(value) => { setPeoplePage(1); setPeopleDomain(value); }}
+            onStageChange={(value) => { setPeoplePage(1); setPeopleStage(value); }}
+            onHighlightChange={(value) => { setPeoplePage(1); setPeopleHighlight(value); }}
+            onPageSizeChange={(value) => { setPeoplePage(1); setPeoplePageSize(value as typeof peoplePageSize); }}
+            onPageChange={(page) => setPeoplePage(page)}
+            onCloseMerge={closeManualMerge}
+            onMergeQueryChange={setPersonMergeQuery}
+            onMergePerson={handleManualMerge}
+            onIncorrectEmailUpload={handleIncorrectEmailCsvUpload}
+            onExport={exportPeople}
+            onSplitNames={splitPeopleNames}
+            onStopSplitNames={() => { stopBatchRef.current = true; }}
+            onSetActiveCompany={setActiveCompanyId}
+            onToggleHighlight={toggleHighlight}
+            onStartEdit={startPersonEdit}
+            onOpenCompany={openCompany}
+            onStartManualMerge={startManualMerge}
+          />
         ) : null}
 
-        {activeView === "tags" ? (
-          <section className="view-surface">
-            <div className="surface-header">
-              <div>
-                <p className="eyebrow">Tags</p>
-                <h2>{formatNumber(tagSummaries.length)} tags in use</h2>
-              </div>
-              <span>{formatChangeCount(pendingChanges.length)}</span>
-            </div>
-            <div className="tag-manager">
-              {tagSummaries.map((summary) => (
-                <article key={summary.key} className="tag-manager-row">
-                  <div>
-                    <span className={clsx("tag-type", summary.type)}>{summary.type === "company" ? "Company" : "Contact"}</span>
-                    <strong>{summary.name}</strong>
-                    <span>{formatNumber(summary.count)} {summary.type === "company" ? "companies" : "contacts"}</span>
-                  </div>
-                  <label className="tag-rename-field">
-                    <Tags size={15} />
-                    <input
-                      value={tagDrafts[summary.key] ?? summary.name}
-                      onChange={(event) => setTagDrafts((current) => ({ ...current, [summary.key]: event.target.value }))}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          renameTag(summary);
-                        }
-                      }}
-                    />
-                  </label>
-                  <button type="button" className="text-button" onClick={() => renameTag(summary)}>
-                    <Check size={14} /> Rename
-                  </button>
-                </article>
-              ))}
-              {tagSummaries.length === 0 ? <p className="empty-state">No tags are in use yet.</p> : null}
-            </div>
-          </section>
-        ) : null}
+        {activeView === "tags" ? <TagsView tagSummaries={tagSummaries} tagDrafts={tagDrafts} setTagDrafts={setTagDrafts} renameTag={renameTag} pendingChanges={pendingChanges} /> : null}
 
         {activeView === "pipeline" ? (
-          <section className="view-surface">
-            <div className="surface-header">
-              <div>
-                <p className="eyebrow">Pipeline</p>
-                <h2>Deal outreach pipeline</h2>
-                <span>{formatNumber(dealPipelineRows.length)} company-deal work items</span>
-              </div>
-              <button type="button" className="secondary-button" onClick={() => exportDealPipeline(dealPipelineRows)}>
-                <Download size={15} /> Export pipeline
-              </button>
-            </div>
-            <div className="pipeline-board">
-              {dealPipelineGroups.map((group) => (
-                <section key={group.status} className="pipeline-column">
-                  <div className="pipeline-column-header">
-                    <strong>{INVESTMENT_DEAL_STATUS_LABELS[group.status]}</strong>
-                    <span>{group.total}</span>
-                  </div>
-                  {group.rows.map((row) => {
-                    const draft = pipelineDrafts[row.key] ?? { status: row.status, note: "" };
-                    const canQueue = draft.status !== row.status || draft.note.trim().length > 0;
-                    const canPersist = isUuid(row.companyId) && isUuid(row.dealId);
-                    const detailNotes = [...row.dealNotes, ...row.relationshipNotes];
-
-                    return (
-                      <article key={row.key} className="pipeline-card">
-                        <div className="pipeline-card-header">
-                          <div>
-                            <strong>{row.dealName}</strong>
-                            <button type="button" className="text-button compact" onClick={() => openCompany(row.companyId)}>
-                              {row.companyName}
-                            </button>
-                          </div>
-                          <span className={clsx("deal-status-pill", row.status)}>{INVESTMENT_DEAL_STATUS_LABELS[row.status]}</span>
-                        </div>
-                        <div className="pipeline-card-meta">
-                          <span>
-                            <UsersRound size={13} /> {row.contacts.length > 0 ? row.contacts.join(", ") : "No linked contact"}
-                          </span>
-                          <span>
-                            <Flag size={13} /> {row.outreachStage}
-                          </span>
-                          <span>
-                            <Activity size={13} /> {row.investedAt ? formatDate(row.investedAt) : "No deal date"}
-                          </span>
-                        </div>
-                        {row.roles.length > 0 ? <p className="pipeline-card-note">Role: {row.roles.join("; ")}</p> : null}
-                        {detailNotes.length > 0 ? <p className="pipeline-card-note">{detailNotes.join(" ")}</p> : null}
-                        <div className="pipeline-status-controls">
-                          <label>
-                            <span>Status</span>
-                            <select
-                              value={draft.status}
-                              onChange={(event) => updatePipelineDraft(row, { status: event.target.value as InvestmentDealStatus })}
-                            >
-                              {INVESTMENT_DEAL_STATUSES.map((status) => (
-                                <option key={status} value={status}>
-                                  {INVESTMENT_DEAL_STATUS_LABELS[status]}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label>
-                            <span>Update note</span>
-                            <input
-                              value={draft.note}
-                              onChange={(event) => updatePipelineDraft(row, { note: event.target.value })}
-                              placeholder="Optional note"
-                            />
-                          </label>
-                          <button
-                            type="button"
-                            className="primary-button compact"
-                            disabled={!canQueue || !canPersist}
-                            title={canPersist ? "Queue status update" : "Push this deal before changing status"}
-                            onClick={() => queueDealStatusUpdate(row)}
-                          >
-                            <Check size={14} /> Queue
-                          </button>
-                        </div>
-                        {!canPersist ? <span className="pipeline-card-warning">Push this new deal before queueing status updates.</span> : null}
-                      </article>
-                    );
-                  })}
-                  {group.rows.length === 0 ? (
-                    <div className="pipeline-empty">
-                      <span>No deal outreach here yet.</span>
-                    </div>
-                  ) : null}
-                </section>
-              ))}
-            </div>
-            {dealPipelineRows.length === 0 ? (
-              <p className="empty-state">No investment deals are linked to companies or company contacts yet.</p>
-            ) : null}
-          </section>
+          <PipelineView
+            groups={dealPipelineGroups}
+            rows={dealPipelineRows}
+            drafts={pipelineDrafts}
+            onOpenCompany={openCompany}
+            onUpdateDraft={updatePipelineDraft}
+            onQueueStatusUpdate={queueDealStatusUpdate}
+            onExport={exportDealPipeline}
+          />
         ) : null}
 
         {activeView === "clients" ? (
@@ -4809,865 +4386,99 @@ export function CrmShell({
         ) : null}
 
         {activeView === "accounting" ? (
-          <section className="view-surface accounting-view">
-            <div className="surface-header">
-              <div>
-                <p className="eyebrow">Accounting</p>
-                <h2>{initialData.accountingAccess.canView ? "Retainers, commissions, expenses, and cash" : "Restricted finance area"}</h2>
-                <span>
-                  {initialData.accountingAccess.canView
-                    ? `${formatNumber(accountingData.documents.length)} documents, ${formatNumber(accountingData.ledgerEntries.length)} ledger entries`
-                    : "Finance allowlist access required"}
-                </span>
-              </div>
-              {initialData.accountingAccess.canView ? (
-                <span className={clsx("accounting-role-pill", initialData.accountingAccess.canEdit && "can-edit")}>
-                  {initialData.accountingAccess.role ?? "viewer"}
-                </span>
-              ) : null}
-            </div>
-
-            {!initialData.accountingAccess.canView ? (
-              <div className="locked-panel">
-                <CreditCard size={24} />
-                <div>
-                  <strong>Accounting is only available to finance users.</strong>
-                  <span>Your account can use the CRM, but it is not on the accounting allowlist.</span>
-                </div>
-              </div>
-            ) : (
-              <>
-                <div className="accounting-summary-grid">
-                  {accountingData.summaries.map((summary) => (
-                    <article key={summary.currency} className="accounting-summary-card">
-                      <div>
-                        <span>{summary.currency}</span>
-                        <strong>{formatMinorMoney(summary.netCashMinor, summary.currency)}</strong>
-                      </div>
-                      <dl>
-                        <div>
-                          <dt>Retainers</dt>
-                          <dd>{formatMinorMoney(summary.retainerIncomeMinor, summary.currency)}</dd>
-                        </div>
-                        <div>
-                          <dt>Commissions</dt>
-                          <dd>{formatMinorMoney(summary.commissionIncomeMinor, summary.currency)}</dd>
-                        </div>
-                        <div>
-                          <dt>Expenses</dt>
-                          <dd>{formatMinorMoney(summary.expensesMinor, summary.currency)}</dd>
-                        </div>
-                        <div>
-                          <dt>Outstanding</dt>
-                          <dd>{formatMinorMoney(summary.outstandingMinor, summary.currency)}</dd>
-                        </div>
-                      </dl>
-                    </article>
-                  ))}
-                  {accountingData.summaries.length === 0 ? (
-                    <article className="accounting-summary-card empty">
-                      <strong>No accounting totals yet.</strong>
-                      <span>Create documents and ledger entries to populate currency summaries.</span>
-                    </article>
-                  ) : null}
-                </div>
-
-                <div className="accounting-toolbar">
-                  <div className="accounting-tabs" role="tablist" aria-label="Accounting sections">
-                    <button
-                      type="button"
-                      className={clsx(accountingTab === "documents" && "active")}
-                      onClick={() => {
-                        setAccountingTab("documents");
-                        setAccountingTypeFilter("");
-                        setAccountingStatusFilter("");
-                      }}
-                    >
-                      Documents
-                    </button>
-                    <button
-                      type="button"
-                      className={clsx(accountingTab === "ledger" && "active")}
-                      onClick={() => {
-                        setAccountingTab("ledger");
-                        setAccountingTypeFilter("");
-                        setAccountingStatusFilter("");
-                      }}
-                    >
-                      Ledger
-                    </button>
-                  </div>
-                  <label className="search-box accounting-search">
-                    <Search size={16} />
-                    <input value={accountingQuery} onChange={(event) => setAccountingQuery(event.target.value)} placeholder="Search accounting" />
-                  </label>
-                </div>
-
-                <div className="accounting-filters">
-                  <FilterSelect value={accountingCompanyFilter} onChange={setAccountingCompanyFilter} label="Company" options={accountingCompanies.map((company) => company.name)} optionValues={accountingCompanies.map((company) => company.id)} />
-                  <FilterSelect
-                    value={accountingTypeFilter}
-                    onChange={setAccountingTypeFilter}
-                    label="Type"
-                    options={accountingTab === "documents" ? ACCOUNTING_DOCUMENT_TYPES.map((type) => ACCOUNTING_DOCUMENT_TYPE_LABELS[type]) : ACCOUNTING_LEDGER_ENTRY_TYPES.map((type) => ACCOUNTING_LEDGER_ENTRY_TYPE_LABELS[type])}
-                    optionValues={accountingTab === "documents" ? [...ACCOUNTING_DOCUMENT_TYPES] : [...ACCOUNTING_LEDGER_ENTRY_TYPES]}
-                  />
-                  <FilterSelect
-                    value={accountingStatusFilter}
-                    onChange={setAccountingStatusFilter}
-                    label="Status"
-                    options={accountingTab === "documents" ? ACCOUNTING_DOCUMENT_STATUSES.map((status) => ACCOUNTING_DOCUMENT_STATUS_LABELS[status]) : ["Active", "Voided"]}
-                    optionValues={accountingTab === "documents" ? [...ACCOUNTING_DOCUMENT_STATUSES] : ["active", "voided"]}
-                  />
-                  <FilterSelect value={accountingCurrencyFilter} onChange={setAccountingCurrencyFilter} label="Currency" options={accountingCurrencies} />
-                  <label className="select-filter accounting-date-filter">
-                    <span>From</span>
-                    <input type="date" value={accountingDateFrom} onChange={(event) => setAccountingDateFrom(event.target.value)} />
-                  </label>
-                  <label className="select-filter accounting-date-filter">
-                    <span>To</span>
-                    <input type="date" value={accountingDateTo} onChange={(event) => setAccountingDateTo(event.target.value)} />
-                  </label>
-                </div>
-
-                {accountingMessage ? (
-                  <div className="data-notice">
-                    <Flag size={16} />
-                    <span>{accountingMessage}</span>
-                  </div>
-                ) : null}
-
-                {accountingTab === "documents" ? (
-                  <div className="accounting-grid">
-                    <form
-                      className="accounting-form"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        saveAccountingDocument();
-                      }}
-                    >
-                      <div className="accounting-form-header">
-                        <h2>{accountingDocumentDraft.documentId ? "Edit document" : "New document"}</h2>
-                        {accountingDocumentDraft.documentId ? (
-                          <button type="button" className="text-button compact" onClick={() => setAccountingDocumentDraft(defaultAccountingDocumentDraft())}>
-                            Clear
-                          </button>
-                        ) : null}
-                      </div>
-                      <label>
-                        <span>Type</span>
-                        <select value={accountingDocumentDraft.documentType} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, documentType: event.target.value as AccountingDocumentType }))}>
-                          {ACCOUNTING_DOCUMENT_TYPES.map((type) => (
-                            <option key={type} value={type}>
-                              {ACCOUNTING_DOCUMENT_TYPE_LABELS[type]}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>
-                        <span>Status</span>
-                        <select value={accountingDocumentDraft.status} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, status: event.target.value as AccountingDocumentDraft["status"] }))}>
-                          {ACCOUNTING_DOCUMENT_STATUSES.filter((status) => status !== "void").map((status) => (
-                            <option key={status} value={status}>
-                              {ACCOUNTING_DOCUMENT_STATUS_LABELS[status]}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>
-                        <span>Company</span>
-                        <select value={accountingDocumentDraft.companyId} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, companyId: event.target.value }))}>
-                          <option value="">General</option>
-                          {companies.map((company) => (
-                            <option key={company.id} value={company.id}>
-                              {company.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>
-                        <span>Title</span>
-                        <input value={accountingDocumentDraft.title} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, title: event.target.value }))} required />
-                      </label>
-                      <div className="accounting-form-row">
-                        <label>
-                          <span>Amount</span>
-                          <input inputMode="decimal" value={accountingDocumentDraft.amount} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, amount: event.target.value }))} placeholder="0.00" required />
-                        </label>
-                        <label>
-                          <span>Currency</span>
-                          <input value={accountingDocumentDraft.currency} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, currency: event.target.value.toUpperCase() }))} maxLength={3} required />
-                        </label>
-                      </div>
-                      <div className="accounting-form-row">
-                        <label>
-                          <span>Issued</span>
-                          <input type="date" value={accountingDocumentDraft.issuedOn} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, issuedOn: event.target.value }))} />
-                        </label>
-                        <label>
-                          <span>Due</span>
-                          <input type="date" value={accountingDocumentDraft.dueOn} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, dueOn: event.target.value }))} />
-                        </label>
-                      </div>
-                      <label>
-                        <span>Reference</span>
-                        <input value={accountingDocumentDraft.externalReference} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, externalReference: event.target.value }))} />
-                      </label>
-                      <label>
-                        <span>Document URL</span>
-                        <input value={accountingDocumentDraft.documentUrl} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, documentUrl: event.target.value }))} />
-                      </label>
-                      <label>
-                        <span>Notes</span>
-                        <textarea value={accountingDocumentDraft.notes} onChange={(event) => setAccountingDocumentDraft((current) => ({ ...current, notes: event.target.value }))} rows={3} />
-                      </label>
-                      <button type="submit" className="primary-button" disabled={!initialData.accountingAccess.canEdit || isSavingAccounting}>
-                        <Check size={15} /> {isSavingAccounting ? "Saving..." : "Save document"}
-                      </button>
-                    </form>
-
-                    <div className="accounting-table-wrap">
-                      <table className="accounting-table">
-                        <thead>
-                          <tr>
-                            <th>Document</th>
-                            <th>Company</th>
-                            <th>Status</th>
-                            <th>Amount</th>
-                            <th>Issued</th>
-                            <th />
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {filteredAccountingDocuments.map((document) => (
-                            <tr key={document.id} className={clsx(document.status === "void" && "voided")}>
-                              <td>
-                                <strong>{document.title}</strong>
-                                <span>{ACCOUNTING_DOCUMENT_TYPE_LABELS[document.documentType]}{document.externalReference ? ` - ${document.externalReference}` : ""}</span>
-                              </td>
-                              <td>{document.companyId ? companyNameById.get(document.companyId) ?? "Unknown company" : "General"}</td>
-                              <td>
-                                <span className={clsx("accounting-status-pill", document.status)}>{ACCOUNTING_DOCUMENT_STATUS_LABELS[document.status]}</span>
-                              </td>
-                              <td>{formatMinorMoney(document.amountMinor, document.currency)}</td>
-                              <td>{document.issuedOn ? formatDate(document.issuedOn) : "No date"}</td>
-                              <td>
-                                <div className="accounting-row-actions">
-                                  <button type="button" className="text-button compact" onClick={() => setAccountingDocumentDraft(accountingDocumentDraftFromDocument(document))} disabled={document.status === "void"}>
-                                    <Pencil size={13} /> Edit
-                                  </button>
-                                  <button type="button" className="text-button compact danger" onClick={() => openAccountingDocumentAction(document, "void")} disabled={!initialData.accountingAccess.canEdit || document.status === "void"}>
-                                    Void
-                                  </button>
-                                  <button type="button" className="text-button compact danger" onClick={() => openAccountingDocumentAction(document, "delete")} disabled={!initialData.accountingAccess.canEdit}>
-                                    Delete
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      {filteredAccountingDocuments.length === 0 ? <p className="empty-state">No accounting documents match these filters.</p> : null}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="accounting-grid">
-                    <form
-                      className="accounting-form"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        saveAccountingLedgerEntry();
-                      }}
-                    >
-                      <div className="accounting-form-header">
-                        <h2>{accountingLedgerDraft.entryId ? "Edit ledger entry" : "New ledger entry"}</h2>
-                        {accountingLedgerDraft.entryId ? (
-                          <button type="button" className="text-button compact" onClick={() => setAccountingLedgerDraft(defaultAccountingLedgerDraft())}>
-                            Clear
-                          </button>
-                        ) : null}
-                      </div>
-                      <label>
-                        <span>Document</span>
-                        <select value={accountingLedgerDraft.documentId} onChange={(event) => handleLedgerDocumentChange(event.target.value)}>
-                          <option value="">No document</option>
-                          {accountingData.documents.filter((document) => document.status !== "void").map((document) => (
-                            <option key={document.id} value={document.id}>
-                              {document.title}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>
-                        <span>Type</span>
-                        <select
-                          value={accountingLedgerDraft.entryType}
-                          onChange={(event) => {
-                            const nextType = event.target.value as AccountingLedgerEntryType;
-                            setAccountingLedgerDraft((current) => ({
-                              ...current,
-                              entryType: nextType,
-                              direction: nextType === "expense_payment" ? "outgoing" : nextType === "adjustment" ? current.direction : "incoming",
-                            }));
-                          }}
-                        >
-                          {ACCOUNTING_LEDGER_ENTRY_TYPES.map((type) => (
-                            <option key={type} value={type}>
-                              {ACCOUNTING_LEDGER_ENTRY_TYPE_LABELS[type]}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>
-                        <span>Direction</span>
-                        <select value={accountingLedgerDraft.direction} onChange={(event) => setAccountingLedgerDraft((current) => ({ ...current, direction: event.target.value as AccountingDirection }))}>
-                          {ACCOUNTING_DIRECTIONS.map((direction) => (
-                            <option key={direction} value={direction}>
-                              {ACCOUNTING_DIRECTION_LABELS[direction]}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>
-                        <span>Company</span>
-                        <select value={accountingLedgerDraft.companyId} onChange={(event) => setAccountingLedgerDraft((current) => ({ ...current, companyId: event.target.value }))}>
-                          <option value="">General</option>
-                          {companies.map((company) => (
-                            <option key={company.id} value={company.id}>
-                              {company.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <div className="accounting-form-row">
-                        <label>
-                          <span>Amount</span>
-                          <input inputMode="decimal" value={accountingLedgerDraft.amount} onChange={(event) => setAccountingLedgerDraft((current) => ({ ...current, amount: event.target.value }))} placeholder="0.00" required />
-                        </label>
-                        <label>
-                          <span>Currency</span>
-                          <input value={accountingLedgerDraft.currency} onChange={(event) => setAccountingLedgerDraft((current) => ({ ...current, currency: event.target.value.toUpperCase() }))} maxLength={3} required />
-                        </label>
-                      </div>
-                      <label>
-                        <span>Date</span>
-                        <input type="date" value={accountingLedgerDraft.occurredOn} onChange={(event) => setAccountingLedgerDraft((current) => ({ ...current, occurredOn: event.target.value }))} required />
-                      </label>
-                      <label>
-                        <span>Reference</span>
-                        <input value={accountingLedgerDraft.externalReference} onChange={(event) => setAccountingLedgerDraft((current) => ({ ...current, externalReference: event.target.value }))} />
-                      </label>
-                      <label>
-                        <span>Document URL</span>
-                        <input value={accountingLedgerDraft.documentUrl} onChange={(event) => setAccountingLedgerDraft((current) => ({ ...current, documentUrl: event.target.value }))} />
-                      </label>
-                      <label>
-                        <span>Notes</span>
-                        <textarea value={accountingLedgerDraft.notes} onChange={(event) => setAccountingLedgerDraft((current) => ({ ...current, notes: event.target.value }))} rows={3} />
-                      </label>
-                      <button type="submit" className="primary-button" disabled={!initialData.accountingAccess.canEdit || isSavingAccounting}>
-                        <Check size={15} /> {isSavingAccounting ? "Saving..." : "Save ledger entry"}
-                      </button>
-                    </form>
-
-                    <div className="accounting-table-wrap">
-                      <table className="accounting-table">
-                        <thead>
-                          <tr>
-                            <th>Entry</th>
-                            <th>Company</th>
-                            <th>Direction</th>
-                            <th>Amount</th>
-                            <th>Date</th>
-                            <th />
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {filteredAccountingEntries.map((entry) => {
-                            const linkedDocument = accountingData.documents.find((document) => document.id === entry.documentId);
-                            return (
-                              <tr key={entry.id} className={clsx(entry.voidedAt && "voided")}>
-                                <td>
-                                  <strong>{ACCOUNTING_LEDGER_ENTRY_TYPE_LABELS[entry.entryType]}</strong>
-                                  <span>{linkedDocument?.title ?? entry.externalReference ?? "Ledger entry"}</span>
-                                </td>
-                                <td>{entry.companyId ? companyNameById.get(entry.companyId) ?? "Unknown company" : "General"}</td>
-                                <td>
-                                  <span className={clsx("accounting-direction-pill", entry.direction)}>{ACCOUNTING_DIRECTION_LABELS[entry.direction]}</span>
-                                </td>
-                                <td>{formatMinorMoney(entry.amountMinor, entry.currency)}</td>
-                                <td>{formatDate(entry.occurredOn)}</td>
-                                <td>
-                                  <div className="accounting-row-actions">
-                                    <button type="button" className="text-button compact" onClick={() => setAccountingLedgerDraft(accountingLedgerDraftFromEntry(entry))} disabled={Boolean(entry.voidedAt)}>
-                                      <Pencil size={13} /> Edit
-                                    </button>
-                                    <button type="button" className="text-button compact danger" onClick={() => openAccountingLedgerAction(entry, "void")} disabled={!initialData.accountingAccess.canEdit || Boolean(entry.voidedAt)}>
-                                      Void
-                                    </button>
-                                    <button type="button" className="text-button compact danger" onClick={() => openAccountingLedgerAction(entry, "delete")} disabled={!initialData.accountingAccess.canEdit}>
-                                      Delete
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                      {filteredAccountingEntries.length === 0 ? <p className="empty-state">No ledger entries match these filters.</p> : null}
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </section>
+          <AccountingView
+            access={initialData.accountingAccess}
+            companies={companies}
+            tab={accountingTab}
+            query={accountingQuery}
+            message={accountingMessage}
+            documentDraft={accountingDocumentDraft}
+            ledgerDraft={accountingLedgerDraft}
+            isSaving={isSavingAccounting}
+            companyFilter={accountingCompanyFilter}
+            typeFilter={accountingTypeFilter}
+            statusFilter={accountingStatusFilter}
+            currencyFilter={accountingCurrencyFilter}
+            dateFrom={accountingDateFrom}
+            dateTo={accountingDateTo}
+            filteredDocuments={filteredAccountingDocuments}
+            filteredEntries={filteredAccountingEntries}
+            accountingCompanies={accountingCompanies}
+            accountingCurrencies={accountingCurrencies}
+            companyNameById={companyNameById}
+            accountingData={accountingData}
+            setTab={setAccountingTab}
+            setQuery={setAccountingQuery}
+            setMessage={setAccountingMessage}
+            setDocumentDraft={setAccountingDocumentDraft}
+            setLedgerDraft={setAccountingLedgerDraft}
+            setIsSaving={setIsSavingAccounting}
+            setCompanyFilter={setAccountingCompanyFilter}
+            setTypeFilter={setAccountingTypeFilter}
+            setStatusFilter={setAccountingStatusFilter}
+            setCurrencyFilter={setAccountingCurrencyFilter}
+            setDateFrom={setAccountingDateFrom}
+            setDateTo={setAccountingDateTo}
+            onSaveDocument={saveAccountingDocument}
+            onSaveLedgerEntry={saveAccountingLedgerEntry}
+            onLedgerDocumentChange={handleLedgerDocumentChange}
+            onOpenDocumentAction={openAccountingDocumentAction}
+            onOpenLedgerAction={openAccountingLedgerAction}
+          />
         ) : null}
 
-        {activeView === "tasks" ? (
-          <section className="view-surface">
-            <div className="surface-header">
-              <div>
-                <p className="eyebrow">Tasks</p>
-                <h2>{formatNumber(taskRows.length)} open next steps</h2>
-              </div>
-              <button type="button" className="secondary-button">
-                <Plus size={15} /> New task
-              </button>
-            </div>
-            <div className="task-list">
-              {taskRows.map(({ task, company }) => (
-                <article key={task.id} className="task-row">
-                  <ListChecks size={18} />
-                  <div>
-                    <strong>{task.title}</strong>
-                    <span>{company.name}</span>
-                  </div>
-                  <span>{task.dueDate ? formatDate(task.dueDate) : "No due date"}</span>
-                  <button type="button" className="text-button" onClick={() => openCompany(company.id)}>
-                    Open company
-                  </button>
-                </article>
-              ))}
-              {taskRows.length === 0 ? <p className="empty-state">No open tasks yet.</p> : null}
-            </div>
-          </section>
-        ) : null}
+        {activeView === "tasks" ? <TasksView taskRows={taskRows} openCompany={openCompany} /> : null}
 
-        {activeView === "import" ? (
-          <section className="view-surface import-view">
-            <div className="surface-header">
-              <div>
-                <p className="eyebrow">Import admin</p>
-                <h2>XLSX seed and cleanup queue</h2>
-              </div>
-              <button type="button" className="primary-button">
-                <Upload size={16} /> Upload workbook
-              </button>
-            </div>
-            <div className="import-grid">
-              <Metric label="Workbook rows" value={formatNumber(initialData.importSummary.rawRows)} />
-              <Metric label="Normalized companies" value={formatNumber(initialData.importSummary.normalizedCompanies)} />
-              <Metric label="Unmatched rows" value={formatNumber(initialData.importSummary.unmatchedRows)} tone="warn" />
-              <Metric label="Suspicious merges" value={formatNumber(initialData.importSummary.suspiciousMerges)} tone="warn" />
-            </div>
-            <div className="cleanup-panel">
-              <div>
-                <h2>Cleanup signals</h2>
-                <p>Duplicate headers, corporate-domain merges, personal email domains, and low-confidence records remain traceable through raw import and merge audit rows.</p>
-              </div>
-              <div className="admin-actions">
-                <button type="button">
-                  <FileSpreadsheet size={16} /> Current workbook: 18,623 rows
-                </button>
-                <button type="button">
-                  <Flag size={16} /> {formatNumber(initialData.importSummary.unmatchedRows)} unmatched
-                </button>
-              </div>
-            </div>
-          </section>
-        ) : null}
+        {activeView === "import" ? <ImportView importSummary={initialData.importSummary} /> : null}
 
-        {pendingChanges.length > 0 ? (
-          <div className="sync-dock" aria-live="polite">
-            <div>
-              <strong>{formatChangeCount(pendingChanges.length)}</strong>
-              <span>{syncMessage ?? (debugMode ? "Debug draft changes are stored locally until you push them to the database." : "Changes are stored locally until you push them.")}</span>
-            </div>
-            <button type="button" className="primary-button" onClick={pushPendingChanges} disabled={isPushingChanges}>
-              <Upload size={16} /> {isPushingChanges ? "Pushing..." : debugMode ? "Push to database" : "Push changes"}
-            </button>
-          </div>
-        ) : syncMessage ? (
-          <div className="sync-dock complete" aria-live="polite">
-            <div>
-              <strong>All changes pushed</strong>
-              <span>{syncMessage}</span>
-            </div>
-          </div>
-        ) : null}
+        <SyncDock pendingChanges={pendingChanges} syncMessage={syncMessage} debugMode={debugMode} isPushingChanges={isPushingChanges} pushPendingChanges={pushPendingChanges} />
 
-        {accountingRecordActionTarget ? (
-          <div className="modal-backdrop" role="presentation">
-            <section className="contact-editor accounting-void-dialog" role="dialog" aria-modal="true" aria-labelledby="accounting-void-title">
-              <form
-                className="contact-editor-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  confirmAccountingRecordAction();
-                }}
-              >
-                <div className="contact-editor-header">
-                  <div>
-                    <p className="eyebrow">Accounting</p>
-                    <h2 id="accounting-void-title">{accountingRecordActionTarget.action === "delete" ? "Delete accounting record" : "Void accounting record"}</h2>
-                  </div>
-                  <button type="button" className="icon-button" onClick={closeAccountingRecordActionDialog} title="Close accounting action dialog" disabled={isSavingAccounting}>
-                    <X size={16} />
-                  </button>
-                </div>
+        <AccountingVoidDialog
+          target={accountingRecordActionTarget}
+          reason={accountingRecordActionReason}
+          setReason={setAccountingRecordActionReason}
+          isSaving={isSavingAccounting}
+          onConfirm={confirmAccountingRecordAction}
+          onClose={closeAccountingRecordActionDialog}
+        />
 
-                <p className="accounting-void-summary">
-                  {accountingRecordActionTarget.action === "delete" ? "Permanently delete" : "Void"} {accountingRecordActionTarget.entityType === "document" ? "document" : "ledger entry"}{" "}
-                  <strong>{accountingRecordActionTarget.title}</strong>.{" "}
-                  {accountingRecordActionTarget.action === "delete" ? "A snapshot and reason stay in the audit trail." : "The record stays in the audit trail."}
-                </p>
-
-                <label className="editor-field">
-                  {accountingRecordActionTarget.action === "delete" ? "Delete reason" : "Void reason"}
-                  <textarea
-                    value={accountingRecordActionReason}
-                    onChange={(event) => setAccountingRecordActionReason(event.target.value)}
-                    rows={4}
-                    maxLength={1000}
-                    required
-                    autoFocus
-                    placeholder={accountingRecordActionTarget.action === "delete" ? "Reason for deleting this mistaken record" : "Reason for voiding this record"}
-                  />
-                </label>
-
-                <div className="contact-editor-footer">
-                  <button type="button" className="secondary-button" onClick={closeAccountingRecordActionDialog} disabled={isSavingAccounting}>
-                    Cancel
-                  </button>
-                  <button type="submit" className="primary-button danger" disabled={accountingRecordActionReason.trim().length === 0 || isSavingAccounting}>
-                    <Check size={15} /> {isSavingAccounting ? (accountingRecordActionTarget.action === "delete" ? "Deleting..." : "Voiding...") : accountingRecordActionTarget.action === "delete" ? "Delete record" : "Void record"}
-                  </button>
-                </div>
-              </form>
-            </section>
-          </div>
-        ) : null}
-
-        {editingPerson ? (
-          <div className="modal-backdrop" role="presentation">
-            <section className="contact-editor" role="dialog" aria-modal="true" aria-labelledby="contact-editor-title">
-              <form
-                className="contact-editor-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  saveEditedPerson();
-                }}
-              >
-                <div className="contact-editor-header">
-                  <div>
-                    <p className="eyebrow">Edit contact</p>
-                    <h2 id="contact-editor-title">{editingPerson.displayName}</h2>
-                  </div>
-                  <button type="button" className="icon-button" onClick={closePersonEdit} title="Close editor">
-                    <X size={16} />
-                  </button>
-                </div>
-
-                <label className="editor-field">
-                  Name
-                  <input value={editDisplayName} onChange={(event) => setEditDisplayName(event.target.value)} placeholder="Contact name" />
-                </label>
-
-                <div className="editor-grid">
-                  <label className="editor-field">
-                    First name
-                    <input value={editFirstName} onChange={(event) => setEditFirstName(event.target.value)} placeholder="First name" />
-                  </label>
-                  <label className="editor-field">
-                    Last name
-                    <input value={editLastName} onChange={(event) => setEditLastName(event.target.value)} placeholder="Last name" />
-                  </label>
-                  <label className="editor-field">
-                    Job title
-                    <input value={editJobTitle} onChange={(event) => setEditJobTitle(event.target.value)} placeholder="Partner" />
-                  </label>
-                  <label className="editor-field">
-                    LinkedIn
-                    <input value={editLinkedinUrl} onChange={(event) => setEditLinkedinUrl(event.target.value)} placeholder="https://www.linkedin.com/in/..." />
-                  </label>
-                  <label className="editor-field">
-                    Phone
-                    <input value={editPhone} onChange={(event) => setEditPhone(event.target.value)} placeholder="+44..." />
-                  </label>
-                  <label className="editor-field">
-                    Country
-                    <input value={editCountry} onChange={(event) => setEditCountry(event.target.value)} placeholder="United Kingdom" />
-                  </label>
-                </div>
-
-                <div className="editor-section">
-                  <div className="section-heading">
-                    <h2>Email addresses</h2>
-                    <button type="button" className="text-button" onClick={addEditEmail}>
-                      <Plus size={14} /> Add email
-                    </button>
-                  </div>
-                  <div className="email-editor-list">
-                    {editEmails.map((email, index) => (
-                      <div key={index} className="email-editor-row">
-                        <span className="email-position">{index === 0 ? "Primary" : `#${index + 1}`}</span>
-                        <input value={email} onChange={(event) => updateEditEmail(index, event.target.value)} placeholder="name@example.com" />
-                        <button type="button" className="icon-button" onClick={() => moveEditEmail(index, -1)} disabled={index === 0} title="Move email up">
-                          <ArrowUp size={15} />
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-button"
-                          onClick={() => moveEditEmail(index, 1)}
-                          disabled={index === editEmails.length - 1}
-                          title="Move email down"
-                        >
-                          <ArrowDown size={15} />
-                        </button>
-                        <button type="button" className="icon-button danger" onClick={() => removeEditEmail(index)} title="Remove email">
-                          <Trash2 size={15} />
-                        </button>
-                      </div>
-                    ))}
-                    {editEmails.length === 0 ? <p className="empty-state compact">No email addresses on this contact.</p> : null}
-                  </div>
-                </div>
-
-                <div className="editor-section">
-                  <div className="section-heading">
-                    <h2>Contact tags</h2>
-                    <span>{editCategories.length}</span>
-                  </div>
-                  <div className="tag-editor">
-                    <div className="contact-chip-list editor">
-                      {editCategories.map((category) => (
-                        <button key={category} type="button" className="contact-chip removable" onClick={() => removeEditCategory(category)} title={`Remove ${category}`}>
-                          {category}
-                          <X size={12} />
-                        </button>
-                      ))}
-                      {editCategories.length === 0 ? <span className="muted-cell">No contact tags</span> : null}
-                    </div>
-                    <label className="tag-add-row">
-                      <Tags size={15} />
-                      <input
-                        value={editCategoryInput}
-                        onChange={(event) => setEditCategoryInput(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            addEditCategory();
-                          }
-                        }}
-                        placeholder="Add tag"
-                      />
-                      <button type="button" className="text-button" onClick={addEditCategory}>
-                        <Plus size={14} /> Add
-                      </button>
-                    </label>
-                  </div>
-                </div>
-
-                {editingPersonInvestment && activePersonInvestmentDraft ? (
-                  <div className="editor-section">
-                    <div className="section-heading">
-                      <h2>Investment profile</h2>
-                      <span>{relationshipChipLabel(editingPersonInvestment)}</span>
-                    </div>
-                    <div className="investment-grid editor-investment-grid">
-                      <label className="select-filter">
-                        <span>Status</span>
-                        <select
-                          value={activePersonInvestmentDraft.investmentStatus}
-                          onChange={(event) => setPersonInvestmentDraft({ ...activePersonInvestmentDraft, investmentStatus: event.target.value as InvestmentStatus })}
-                        >
-                          {INVESTMENT_STATUSES.map((statusValue) => (
-                            <option key={statusValue} value={statusValue}>
-                              {INVESTMENT_STATUS_LABELS[statusValue]}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown size={14} />
-                      </label>
-                      <label className="select-filter">
-                        <span>Capacity</span>
-                        <select
-                          value={activePersonInvestmentDraft.capacityStatus}
-                          onChange={(event) => setPersonInvestmentDraft({ ...activePersonInvestmentDraft, capacityStatus: event.target.value as CapacityStatus })}
-                        >
-                          {CAPACITY_STATUSES.map((statusValue) => (
-                            <option key={statusValue} value={statusValue}>
-                              {CAPACITY_STATUS_LABELS[statusValue]}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown size={14} />
-                      </label>
-                      <label className="editor-field">
-                        Last invested
-                        <input type="date" value={activePersonInvestmentDraft.lastInvestedDate} onChange={(event) => setPersonInvestmentDraft({ ...activePersonInvestmentDraft, lastInvestedDate: event.target.value })} />
-                      </label>
-                      <label className="editor-field wide-field">
-                        Notes
-                        <textarea value={activePersonInvestmentDraft.notes} onChange={(event) => setPersonInvestmentDraft({ ...activePersonInvestmentDraft, notes: event.target.value })} rows={2} />
-                      </label>
-                      <label className="editor-field">
-                        Deal name
-                        <input value={activePersonInvestmentDraft.dealName} onChange={(event) => setPersonInvestmentDraft({ ...activePersonInvestmentDraft, dealName: event.target.value })} placeholder="Deal name" />
-                      </label>
-                      <label className="select-filter">
-                        <span>Deal status</span>
-                        <select value={activePersonInvestmentDraft.dealStatus} onChange={(event) => setPersonInvestmentDraft({ ...activePersonInvestmentDraft, dealStatus: event.target.value as InvestmentDealStatus })}>
-                          {INVESTMENT_DEAL_STATUSES.map((statusValue) => (
-                            <option key={statusValue} value={statusValue}>
-                              {INVESTMENT_DEAL_STATUS_LABELS[statusValue]}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown size={14} />
-                      </label>
-                      <label className="editor-field">
-                        Deal date
-                        <input type="date" value={activePersonInvestmentDraft.dealDate} onChange={(event) => setPersonInvestmentDraft({ ...activePersonInvestmentDraft, dealDate: event.target.value })} />
-                      </label>
-                    </div>
-                  </div>
-                ) : null}
-
-                {personEditMessage ? (
-                  <div className="data-notice error">
-                    <Flag size={16} />
-                    <span>{personEditMessage}</span>
-                  </div>
-                ) : null}
-
-                <div className="contact-editor-footer">
-                  <button type="button" className="secondary-button" onClick={closePersonEdit}>
-                    Cancel
-                  </button>
-                  <button type="submit" className="primary-button" disabled={isPushingChanges}>
-                    <Check size={15} /> Queue contact update
-                  </button>
-                </div>
-              </form>
-            </section>
-          </div>
-        ) : null}
+        <ContactEditor
+          editingPerson={editingPerson}
+          editDisplayName={editDisplayName}
+          setEditDisplayName={setEditDisplayName}
+          editFirstName={editFirstName}
+          setEditFirstName={setEditFirstName}
+          editLastName={editLastName}
+          setEditLastName={setEditLastName}
+          editJobTitle={editJobTitle}
+          setEditJobTitle={setEditJobTitle}
+          editLinkedinUrl={editLinkedinUrl}
+          setEditLinkedinUrl={setEditLinkedinUrl}
+          editPhone={editPhone}
+          setEditPhone={setEditPhone}
+          editCountry={editCountry}
+          setEditCountry={setEditCountry}
+          editEmails={editEmails}
+          editCategoryInput={editCategoryInput}
+          setEditCategoryInput={setEditCategoryInput}
+          editCategories={editCategories}
+          editingPersonInvestment={editingPersonInvestment}
+          activePersonInvestmentDraft={activePersonInvestmentDraft}
+          personEditMessage={personEditMessage}
+          isPushingChanges={isPushingChanges}
+          onSave={saveEditedPerson}
+          onClose={closePersonEdit}
+          onUpdateEmail={updateEditEmail}
+          onAddEmail={addEditEmail}
+          onRemoveEmail={removeEditEmail}
+          onMoveEmail={moveEditEmail}
+          onAddCategory={addEditCategory}
+          onRemoveCategory={removeEditCategory}
+          onSetPersonInvestmentDraft={setPersonInvestmentDraft}
+        />
       </main>
     </div>
   );
 }
 
-function NavButton({ active, icon, label, onClick }: { active: boolean; icon: React.ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button type="button" className={clsx("nav-item", active && "active")} onClick={onClick}>
-      {icon}
-      <span>{label}</span>
-    </button>
-  );
-}
 
-function Metric({ label, value, tone }: { label: string; value: string; tone?: "warn" }) {
-  return (
-    <div className={clsx("metric", tone)}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function MultiFilterSelect({
-  icon,
-  label,
-  options,
-  selected,
-  onToggle,
-  formatOption = (value) => value,
-}: {
-  icon?: React.ReactNode;
-  label: string;
-  options: readonly string[];
-  selected: Set<string>;
-  onToggle: (value: string) => void;
-  formatOption?: (value: string) => string;
-}) {
-  const selectedLabels = options.filter((option) => selected.has(option)).map(formatOption);
-  const valueLabel =
-    selectedLabels.length === 0
-      ? "All"
-      : selectedLabels.length > 2
-        ? `${selectedLabels.slice(0, 2).join(", ")} +${selectedLabels.length - 2}`
-        : selectedLabels.join(", ");
-
-  return (
-    <details className={clsx("multi-filter", selected.size > 0 && "active")}>
-      <summary>
-        <span className="multi-filter-icon">{icon ?? <Filter size={15} />}</span>
-        <span className="multi-filter-copy">
-          <span>{label}</span>
-          <strong>{valueLabel}</strong>
-        </span>
-        <ChevronDown size={14} />
-      </summary>
-      <div className="multi-filter-menu">
-        <div className="multi-filter-menu-header">
-          <span>{label}</span>
-          <strong>{selected.size === 0 ? "All" : `${selected.size} selected`}</strong>
-        </div>
-        {options.map((option) => (
-          <label key={option} className="multi-filter-option">
-            <input type="checkbox" checked={selected.has(option)} onChange={() => onToggle(option)} />
-            <span className="multi-filter-check" aria-hidden="true">
-              <Check size={13} />
-            </span>
-            <span>{formatOption(option)}</span>
-          </label>
-        ))}
-      </div>
-    </details>
-  );
-}
-
-function FilterSelect({
-  icon,
-  value,
-  onChange,
-  label,
-  options,
-  optionValues,
-}: {
-  icon?: React.ReactNode;
-  value: string;
-  onChange: (value: string) => void;
-  label: string;
-  options: readonly string[];
-  optionValues?: readonly string[];
-}) {
-  return (
-    <label className="select-filter">
-      {icon}
-      <span>{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
-        <option value="">All</option>
-        {options.map((option, index) => (
-          <option key={optionValues?.[index] ?? option} value={optionValues?.[index] ?? option}>
-            {option}
-          </option>
-        ))}
-      </select>
-      <ChevronDown size={14} />
-    </label>
-  );
-}
