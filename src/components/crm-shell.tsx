@@ -1,27 +1,11 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import clsx from "clsx";
 
-import {
-  formatNumber,
-  isUuid,
-} from "@/components/shared";
-
-import {
-  addActivityAction, addCompanyTagAction, addInvestmentDealAction,
-  highlightPersonAction,
-  mergeCompaniesAction, mergePeopleAction, moveStageAction,
-  refreshDashboardAction, renameCompanyTagAction,
-  updateCompanyAction, updateCompanyEnrichmentAction,
-  updateInvestmentDealStatusAction, updateInvestmentRelationshipAction,
-  updatePersonAction,
-} from "@/app/actions";
-import { normalizeCompanyWebsites } from "@/lib/company-websites";
-import { normalizePersonCategories } from "@/lib/person-update";
-import { buildDealPipelineRows, groupDealPipelineRows } from "@/lib/deal-pipeline";
-import { contactExportValues, filterContactExportRows, type ContactExportCriterion } from "@/lib/export/contacts";
+import { contactExportValues, filterContactExportRows } from "@/lib/export/contacts";
+import { COMPANY_PAGE_SIZE_OPTIONS, INCORRECT_EMAIL_TAG, emptyAccountingData, exportCompanies, exportDealPipeline, exportPeople, enrichmentDraftForCompany, initialCompanyIdFor, investmentDraftForRelationship, personSourceIds, relationshipForCompany } from "@/lib/crm-utils";
 import { FundraisingView } from "@/components/fundraising-view";
 import { Sidebar } from "@/components/views/shell/sidebar";
 import { CrmTopbar } from "@/components/views/shell/crm-topbar";
@@ -39,41 +23,16 @@ import { AccountingView } from "@/components/views/accounting/accounting-view";
 import { AccountingVoidDialog } from "@/components/views/accounting/accounting-void-dialog";
 import { CompaniesView } from "@/components/views/companies/companies-view";
 import { ContactEditor, usePersonEditor } from "@/components/views/people/contact-editor";
+
 import { usePendingChanges } from "@/components/views/shell/use-pending-changes";
 import { useCrmDebug } from "@/components/views/shell/use-crm-debug";
 import { useCrmAccounting } from "@/components/views/shell/use-crm-accounting";
-import type {
-  AccountingData,
-  Company, CompanyEnrichment,
-  InvestmentDealStatus, InvestmentRelationship, OutreachStage, Person, Tag,
-} from "@/lib/types";
-import {
-  OUTREACH_STAGES,
-} from "@/lib/types";
-import type {
-  InvestmentDraft,
-  PipelineStatusDraft, EnrichmentDraft, EnrichmentBatchProgress,
-  TagSummary, PeoplePageSize,
-} from "@/components/shared";
-import type { DealPipelineRow } from "@/lib/deal-pipeline";
-import type {
-  ActiveView, CompanyPageSize, CrmShellProps,
-  EnrichmentApiResponse,
-} from "@/lib/crm-types";
-import {
-  emptyAccountingData,
-  buildCompanySearchText, companyMatches, personMatches,
-  exportCompanies, exportDealPipeline, exportPeople,
-  normalizeEnrichmentKeywords, defaultCompanyEnrichment,
-  relationshipMatches, relationshipForCompany,
-  enrichmentDraftForCompany, investmentDraftForRelationship,
-  personSourceIds,
-  mergeCompanyDetails, mergePersonDetails,
-  groupPeopleDirectory, initialCompanyIdFor, uniqueValues,
-  uniqueTags, enrichmentResponseTags,
-  formatDealStatusSummary, emailDomain, extractEmailsFromText,
-  COMPANY_PAGE_SIZE_OPTIONS, INCORRECT_EMAIL_TAG,
-} from "@/lib/crm-utils";
+import { useCrmCompanies } from "@/components/views/shell/use-crm-companies";
+import { useCrmPeople } from "@/components/views/shell/use-crm-people";
+import { useCrmEnrichment } from "@/components/views/shell/use-crm-enrichment";
+import { useInvestmentDeals } from "@/components/views/shell/use-investment-deals";
+
+import type { CrmShellProps, ActiveView } from "@/lib/crm-types";
 
 export function CrmShell({
   initialData,
@@ -88,62 +47,140 @@ export function CrmShell({
   const authLabel = initialData.authMode === "demo" ? "Demo data" : isSignedIn ? "Signed in" : "Signed out";
   const authDetail = initialData.authMode === "demo" ? "Local preview" : isSignedIn ? initialData.currentUserName : "Not signed in";
   const isDemoData = initialData.dataMode === "demo";
-  const initialCompanyId = initialCompanyIdFor(initialData.companies, companyId);
-  const [companies, setCompanies] = useState(initialData.companies);
   const [activeView, setActiveView] = useState<ActiveView>(initialActiveView);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(companyId && initialCompanyId ? [initialCompanyId] : []));
-  const [activeCompanyId, setActiveCompanyId] = useState(initialCompanyId);
-  const [query, setQuery] = useState("");
-  const [stageFilters, setStageFilters] = useState<Set<string>>(new Set());
-  const [countryFilters, setCountryFilters] = useState<Set<string>>(new Set());
-  const [tagFilters, setTagFilters] = useState<Set<string>>(new Set());
-  const [qualityFilters, setQualityFilters] = useState<Set<string>>(new Set());
-  const [exportCriterion, setExportCriterion] = useState<ContactExportCriterion>("sector_category");
-  const [exportValue, setExportValue] = useState("Biotech");
-  const [companyPageSize, setCompanyPageSize] = useState<CompanyPageSize>(100);
-  const [companyPage, setCompanyPage] = useState(1);
-  const [companyMergeTargetId, setCompanyMergeTargetId] = useState<string | null>(null);
-  const [peopleQuery, setPeopleQuery] = useState("");
-  const [peopleCompany, setPeopleCompany] = useState("");
-  const [peopleDomain, setPeopleDomain] = useState("");
-  const [peopleStage, setPeopleStage] = useState("");
-  const [peopleHighlight, setPeopleHighlight] = useState("");
-  const [peoplePageSize, setPeoplePageSize] = useState<PeoplePageSize>(250);
-  const [peoplePage, setPeoplePage] = useState(1);
-  const [personMergeTargetId, setPersonMergeTargetId] = useState<string | null>(null);
-  const [personMergeQuery, setPersonMergeQuery] = useState("");
-  const [peopleMessage, setPeopleMessage] = useState<string | null>(null);
 
-  const [bulkTag, setBulkTag] = useState("");
-  const [noteText, setNoteText] = useState("");
-  const [pipelineDrafts, setPipelineDrafts] = useState<Record<string, PipelineStatusDraft>>({});
   const {
     pendingChanges, setPendingChanges, isPushingChanges, syncMessage, setSyncMessage,
     buildPendingChange, queuePendingChange, pushPendingChanges, pushPendingEnrichments, queuePersonUpdate,
   } = usePendingChanges(initialData);
-  const [incorrectEmails, setIncorrectEmails] = useState<Set<string>>(new Set());
-  const [incorrectEmailMessage, setIncorrectEmailMessage] = useState<string | null>(null);
-  const [companyModalId, setCompanyModalId] = useState<string | null>(null);
-  const [companyDraft, setCompanyDraft] = useState({ companyId: "", name: "", websites: "", description: "", country: "" });
-  const [enrichmentDraft, setEnrichmentDraft] = useState<EnrichmentDraft | null>(null);
-  const [companyInvestmentDraft, setCompanyInvestmentDraft] = useState<InvestmentDraft | null>(null);
-  const [enrichmentMessage, setEnrichmentMessage] = useState<string | null>(null);
-  const [batchProgress, setBatchProgress] = useState<EnrichmentBatchProgress | null>(null);
-  const [isEnriching, setIsEnriching] = useState(false);
-  const [isRefreshingTable, setIsRefreshingTable] = useState(false);
-  const [tagDrafts, setTagDrafts] = useState<Record<string, string>>({});
-  const [isSplittingNames, setIsSplittingNames] = useState(false);
-  const [splitNamesProgress, setSplitNamesProgress] = useState<{ total: number; completed: number; failed: number } | null>(null);
-  const [namesMessage, setNamesMessage] = useState<string | null>(null);
-  const [accountingData, setAccountingData] = useState<AccountingData>(() => initialData.accounting ?? emptyAccountingData());
-  const stopBatchRef = useRef(false);
-  const batchAbortControllerRef = useRef<AbortController | null>(null);
+
+  const [accountingData, setAccountingData] = useState(() => initialData.accounting ?? emptyAccountingData());
+
+  const {
+    companies, setCompanies,
+    activeCompanyId, setActiveCompanyId,
+    selectedIds, setSelectedIds,
+    query, setQuery,
+    stageFilters, setStageFilters,
+    countryFilters, setCountryFilters,
+    tagFilters, setTagFilters,
+    qualityFilters, setQualityFilters,
+    exportCriterion, setExportCriterion,
+    exportValue, setExportValue,
+    companyPageSize, setCompanyPageSize,
+    companyPage, setCompanyPage,
+    companyMergeTargetId, setCompanyMergeTargetId,
+    companyModalId, setCompanyModalId,
+    companyDraft, setCompanyDraft,
+    bulkTag, setBulkTag,
+    noteText, setNoteText,
+    isRefreshingTable,
+
+    deferredCompanyQuery,
+    selectedCompanies,
+    companyMergeTarget,
+    companyMergeSources,
+    companyNameById,
+    filteredCompanies,
+    activeCompanyFilterCount,
+    companyTotalPages,
+    effectiveCompanyPage,
+    visibleCompanies,
+    companyStart, companyEnd,
+    activeCompany,
+    activeCompanyDraft,
+    exportOptions, exportRows,
+    countries, tagNames,
+    pipelineCounts,
+    batchTargetCompanies,
+    peopleRelationRows,
+
+    updateCompanies,
+    toggleCompany,
+    clearCompanyFilters,
+    refreshCompanyTable,
+    openCompanyModal, closeCompanyModal,
+    openCompany,
+    startCompanyMerge, closeCompanyMerge,
+    updateActiveCompany,
+    addCreatedCompanyLocally, addCreatedPersonLocally,
+    handleCompanyMerge,
+    applyStage, applyBulkTag,
+    addManualNote,
+  } = useCrmCompanies({ initialData, companyId, queuePendingChange });
+
+  const {
+    peopleQuery, setPeopleQuery,
+    peopleCompany, setPeopleCompany,
+    peopleDomain, setPeopleDomain,
+    peopleStage, setPeopleStage,
+    peopleHighlight, setPeopleHighlight,
+    peoplePageSize, setPeoplePageSize,
+    peoplePage, setPeoplePage,
+    personMergeTargetId, setPersonMergeTargetId,
+    personMergeQuery, setPersonMergeQuery,
+    peopleMessage, setPeopleMessage,
+    incorrectEmails, setIncorrectEmails,
+    incorrectEmailMessage, setIncorrectEmailMessage,
+    isSplittingNames, splitNamesProgress,
+    namesMessage, setNamesMessage,
+    tagDrafts, setTagDrafts,
+
+    deferredPeopleQuery,
+    peopleDirectory,
+    filteredPeopleDirectory,
+    visiblePeopleDirectory,
+    personMergeTarget,
+    personMergeCandidates,
+    peopleCompanyNames,
+    peopleEmailDomains,
+    tagSummaries,
+    peopleStart, peopleEnd,
+    effectivePeoplePage,
+    peopleTotalPages,
+
+    updatePersonLocally,
+    applyCategoryToPeople,
+    toggleHighlight,
+    importIncorrectEmailsCsv, handleIncorrectEmailCsvUpload,
+    splitPeopleNames,
+    startManualMerge, closeManualMerge,
+    handleManualMerge,
+    renameTag,
+  } = useCrmPeople({ companies, setCompanies, queuePendingChange, queuePersonUpdate, initialData });
+
+  const {
+    enrichmentDraft, setEnrichmentDraft,
+    enrichmentMessage, setEnrichmentMessage,
+    batchProgress, setBatchProgress,
+    isEnriching, setIsEnriching,
+    stopBatchRef, batchAbortControllerRef,
+
+    batchProcessed, batchPercent, isBatchEnriching,
+
+    saveActiveCompanyEnrichment,
+    enrichActiveCompany,
+    enrichCompanyBatch,
+    requestStopEnrichmentBatch,
+  } = useCrmEnrichment({ updateCompanies, queuePendingChange });
+
+  const {
+    pipelineDrafts, setPipelineDrafts,
+    companyInvestmentDraft, setCompanyInvestmentDraft,
+    dealPipelineRows, dealPipelineGroups,
+
+    saveInvestmentRelationship,
+    addInvestmentDealLocally,
+    updatePipelineDraft,
+    queueDealStatusUpdate,
+  } = useInvestmentDeals({ companies, setCompanies, queuePendingChange });
+
   const {
     debugMode, debugModeReady, debugStorageIssue, debugDraftHydratedRef,
     toggleDebugMode, resetDebugDraft,
   } = useCrmDebug({
     initialData,
-    initialCompanyId,
+    initialCompanyId: initialCompanyIdFor(initialData.companies, companyId),
     companyId,
     buildPendingChange,
     companies,
@@ -168,7 +205,7 @@ export function CrmShell({
     setSyncMessage,
     clearCompanyFilters,
   });
-  const companyNameById = useMemo(() => new Map(companies.map((company) => [company.id, company.name])), [companies]);
+
   const {
     accountingTab, setAccountingTab,
     accountingQuery, setAccountingQuery,
@@ -198,106 +235,33 @@ export function CrmShell({
     companyNameById,
     setActiveView,
   });
-  const deferredCompanyQuery = useDeferredValue(query.trim().toLowerCase());
-  const deferredPeopleQuery = useDeferredValue(peopleQuery.trim().toLowerCase());
+
   const showCompanyTable = !hideTable;
   const showDetailPanel = !hideDetailPanel;
 
-  const selectedCompanies = useMemo(() => companies.filter((company) => selectedIds.has(company.id)), [companies, selectedIds]);
-  const companyMergeTarget = selectedCompanies.length >= 2
-    ? selectedCompanies.find((company) => company.id === companyMergeTargetId) ?? selectedCompanies[0]
-    : null;
-  const companyMergeSources = companyMergeTarget ? selectedCompanies.filter((company) => company.id !== companyMergeTarget.id) : [];
-  const companySearchTextById = useMemo(() => new Map(companies.map((company) => [company.id, buildCompanySearchText(company)])), [companies]);
-  const filteredCompanies = useMemo(
-    () => companies.filter((company) => companyMatches(company, companySearchTextById.get(company.id) ?? "", deferredCompanyQuery, stageFilters, countryFilters, tagFilters, qualityFilters)),
-    [companies, companySearchTextById, countryFilters, deferredCompanyQuery, qualityFilters, stageFilters, tagFilters],
-  );
-  const activeCompanyFilterCount = stageFilters.size + countryFilters.size + tagFilters.size + qualityFilters.size;
-  const companyTotalPages = companyPageSize === "all" ? 1 : Math.max(1, Math.ceil(filteredCompanies.length / companyPageSize));
-  const effectiveCompanyPage = Math.min(companyPage, companyTotalPages);
-  const visibleCompanies = useMemo(() => {
-    if (companyPageSize === "all") return filteredCompanies;
-    const start = (effectiveCompanyPage - 1) * companyPageSize;
-    return filteredCompanies.slice(start, start + companyPageSize);
-  }, [companyPageSize, effectiveCompanyPage, filteredCompanies]);
-  const companyStart = filteredCompanies.length === 0 ? 0 : companyPageSize === "all" ? 1 : (effectiveCompanyPage - 1) * companyPageSize + 1;
-  const companyEnd = companyPageSize === "all" ? filteredCompanies.length : Math.min(companyStart + companyPageSize - 1, filteredCompanies.length);
-  const activeCompany = companies.find((company) => company.id === activeCompanyId) ?? filteredCompanies[0] ?? companies[0];
-  const activeCompanyDraft =
-    companyDraft.companyId === activeCompany?.id
-      ? companyDraft
-      : {
-          companyId: activeCompany?.id ?? "",
-          name: activeCompany?.name ?? "",
-          websites: activeCompany?.websiteDomains.join("\n") ?? "",
-          description: activeCompany?.description ?? "",
-          country: activeCompany?.country ?? "",
-        };
   const activeCompanyEnrichmentDraft = activeCompany && enrichmentDraft?.companyId === activeCompany.id ? enrichmentDraft : activeCompany ? enrichmentDraftForCompany(activeCompany) : null;
+
   const activeCompanyInvestment = activeCompany ? relationshipForCompany(activeCompany) : null;
+
   const activeCompanyInvestmentDraft =
     activeCompanyInvestment && companyInvestmentDraft?.targetKey === `${activeCompanyInvestment.companyId ?? "none"}:${activeCompanyInvestment.personId ?? "none"}`
       ? companyInvestmentDraft
       : activeCompanyInvestment
         ? investmentDraftForRelationship(activeCompanyInvestment)
         : null;
-  const exportOptions = useMemo(() => contactExportValues(companies, exportCriterion), [companies, exportCriterion]);
-  const exportRows = useMemo(() => filterContactExportRows(companies, exportCriterion, exportValue), [companies, exportCriterion, exportValue]);
-  const countries = uniqueValues(companies, (company) => company.country);
-  const tagNames = [...new Set(companies.flatMap((company) => company.tags.map((item) => item.name)))].sort((a, b) => a.localeCompare(b, "en-US"));
-  const pipelineCounts = OUTREACH_STAGES.map((item) => ({
-    stage: item,
-    count: companies.filter((company) => company.outreachStage === item).length,
-  }));
-  const peopleRelationRows = useMemo(
+
+  const pendingEnrichmentCount = pendingChanges.filter((change) => change.record.kind === "company-enrichment-update").length;
+
+  const taskRows = useMemo(
     () =>
       companies.flatMap((company) =>
-        company.people.map((person) => ({
-          person,
-          company,
-        })),
+        company.nextTask
+          ? [{ task: company.nextTask as typeof company.nextTask & Record<string, unknown>, company }]
+          : [],
       ),
     [companies],
   );
-  const batchTargetCompanies = selectedCompanies.length ? selectedCompanies : filteredCompanies;
-  const isBatchEnriching = isEnriching && batchProgress !== null;
-  const pendingEnrichmentCount = pendingChanges.filter((change) => change.record.kind === "company-enrichment-update").length;
-  const batchProgressProcessed = batchProgress ? batchProgress.completed + batchProgress.skipped + batchProgress.failed : 0;
-  const batchProgressPercent = batchProgress && batchProgress.total > 0 ? Math.round((batchProgressProcessed / batchProgress.total) * 100) : 0;
-  const peopleDirectory = useMemo(() => groupPeopleDirectory(peopleRelationRows), [peopleRelationRows]);
-  const tagSummaries = useMemo(() => {
-    const companyTags = new Map<string, Extract<TagSummary, { type: "company" }>>();
-    const contactTags = new Map<string, Extract<TagSummary, { type: "contact" }>>();
 
-    companies.forEach((company) => {
-      company.tags.forEach((tag) => {
-        const key = `company:${tag.id}`;
-        const current = companyTags.get(key);
-        if (current) current.count += 1;
-        else companyTags.set(key, { key, type: "company", id: tag.id, name: tag.name, color: tag.color, count: 1 });
-      });
-    });
-
-    peopleDirectory.forEach(({ person }) => {
-      person.categories.forEach((category) => {
-        const key = `contact:${category.toLowerCase()}`;
-        const current = contactTags.get(key);
-        if (current) current.count += 1;
-        else contactTags.set(key, { key, type: "contact", name: category, count: 1 });
-      });
-    });
-
-    return [...companyTags.values(), ...contactTags.values()].sort((a, b) => {
-      if (a.type !== b.type) return a.type.localeCompare(b.type);
-      return a.name.localeCompare(b.name, "en-US");
-    });
-  }, [companies, peopleDirectory]);
-  const peopleCompanyNames = useMemo(() => uniqueValues(companies, (company) => company.name), [companies]);
-  const peopleEmailDomains = useMemo(
-    () => [...new Set(peopleDirectory.flatMap(({ person }) => person.emails.map(emailDomain)).filter(Boolean))].sort((a, b) => a.localeCompare(b, "en-US")),
-    [peopleDirectory],
-  );
   const personEditor = usePersonEditor({
     peopleDirectory,
     updatePersonLocally,
@@ -308,60 +272,6 @@ export function CrmShell({
     setPeopleMessage,
     personSourceIds,
   });
-  const personMergeTarget = peopleDirectory.find(({ person }) => person.id === personMergeTargetId) ?? null;
-  const personMergeCandidates = useMemo(() => {
-    if (!personMergeTarget) return [];
-    const query = personMergeQuery.trim().toLowerCase();
-
-    return peopleDirectory
-      .filter(({ person }) => person.id !== personMergeTarget.person.id)
-      .filter(({ person, companies }) => {
-        if (!query) return true;
-        const text = [person.displayName, person.jobTitle, companies.map((company) => company.name).join(" "), person.emails.join(" "), person.linkedinUrl ?? ""].join(" ").toLowerCase();
-        return text.includes(query);
-      })
-      .slice(0, 10);
-  }, [peopleDirectory, personMergeQuery, personMergeTarget]);
-  const filteredPeopleDirectory = useMemo(
-    () =>
-      peopleDirectory.filter(({ person, companies }) =>
-        personMatches({
-          person,
-          companies,
-          query: deferredPeopleQuery,
-          companyFilter: peopleCompany,
-          domainFilter: peopleDomain,
-          stageFilter: peopleStage,
-          highlightFilter: peopleHighlight,
-        }),
-      ),
-    [deferredPeopleQuery, peopleCompany, peopleDirectory, peopleDomain, peopleHighlight, peopleStage],
-  );
-  const peopleTotalPages = peoplePageSize === "all" ? 1 : Math.max(1, Math.ceil(filteredPeopleDirectory.length / peoplePageSize));
-  const effectivePeoplePage = Math.min(peoplePage, peopleTotalPages);
-  const visiblePeopleDirectory = useMemo(() => {
-    if (peoplePageSize === "all") return filteredPeopleDirectory;
-    const start = (effectivePeoplePage - 1) * peoplePageSize;
-    return filteredPeopleDirectory.slice(start, start + peoplePageSize);
-  }, [effectivePeoplePage, filteredPeopleDirectory, peoplePageSize]);
-  const peopleStart = filteredPeopleDirectory.length === 0 ? 0 : peoplePageSize === "all" ? 1 : (effectivePeoplePage - 1) * peoplePageSize + 1;
-  const peopleEnd = peoplePageSize === "all" ? filteredPeopleDirectory.length : Math.min(peopleStart + peoplePageSize - 1, filteredPeopleDirectory.length);
-  const taskRows = useMemo(
-    () =>
-      companies.flatMap((company) =>
-        company.nextTask
-          ? [
-              {
-                task: company.nextTask,
-                company,
-              },
-            ]
-          : [],
-      ),
-    [companies],
-  );
-  const dealPipelineRows = useMemo(() => buildDealPipelineRows(companies), [companies]);
-  const dealPipelineGroups = useMemo(() => groupDealPipelineRows(dealPipelineRows), [dealPipelineRows]);
 
   useEffect(() => {
     if (!authSuccess) return;
@@ -372,1118 +282,6 @@ export function CrmShell({
     url.searchParams.delete("auth");
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }, [authSuccess]);
-
-  useEffect(() => {
-    const companyIds = new Set(initialData.companies.map((company) => company.id));
-    const nextActiveCompanyId = initialCompanyIdFor(initialData.companies, companyId);
-    let cancelled = false;
-
-    queueMicrotask(() => {
-      if (cancelled) return;
-      setCompanies(initialData.companies);
-      setSelectedIds((current) => {
-        const next = new Set([...current].filter((id) => companyIds.has(id)));
-        if (companyId && nextActiveCompanyId) next.add(nextActiveCompanyId);
-        return next;
-      });
-      setActiveCompanyId((current) => (companyIds.has(current) ? current : nextActiveCompanyId));
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [companyId, initialData.companies]);
-
-  useEffect(() => {
-    if (!companyId) return;
-
-    const routeCompanyId = initialCompanyIdFor(companies, companyId);
-    if (!routeCompanyId) return;
-    let cancelled = false;
-
-    queueMicrotask(() => {
-      if (cancelled) return;
-      setActiveCompanyId((current) => (current === routeCompanyId ? current : routeCompanyId));
-      setSelectedIds((current) => (current.has(routeCompanyId) ? current : new Set([routeCompanyId])));
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [companies, companyId]);
-
-  function updateCompanies(updater: (company: Company) => Company) {
-    setCompanies((current) => current.map(updater));
-  }
-
-  function toggleCompany(companyId: string) {
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (next.has(companyId)) next.delete(companyId);
-      else next.add(companyId);
-      return next;
-    });
-  }
-
-  function toggleCompanyFilter(setter: React.Dispatch<React.SetStateAction<Set<string>>>, value: string) {
-    setter((current) => {
-      const next = new Set(current);
-      if (next.has(value)) next.delete(value);
-      else next.add(value);
-      return next;
-    });
-    setCompanyPage(1);
-  }
-
-  function clearCompanyFilters() {
-    setStageFilters(new Set());
-    setCountryFilters(new Set());
-    setTagFilters(new Set());
-    setQualityFilters(new Set());
-    setCompanyPage(1);
-  }
-
-  async function refreshCompanyTable() {
-    if (isRefreshingTable) return;
-
-    setIsRefreshingTable(true);
-    setSyncMessage("Refreshing company table from the database...");
-    try {
-      const result = await refreshDashboardAction();
-      if (!result.ok) {
-        setSyncMessage(`Refresh failed: ${result.message}`);
-        return;
-      }
-      router.refresh();
-      setSyncMessage("Company table refresh requested.");
-    } catch (error) {
-      setSyncMessage(error instanceof Error ? `Refresh failed: ${error.message}` : "Refresh failed.");
-    } finally {
-      setIsRefreshingTable(false);
-    }
-  }
-
-  function openCompanyModal(companyId: string) {
-    setActiveCompanyId(companyId);
-    setCompanyModalId(companyId);
-  }
-
-  function closeCompanyModal() {
-    setCompanyModalId(null);
-  }
-
-  function openCompany(companyId: string) {
-    openCompanyModal(companyId);
-  }
-
-  function startCompanyMerge() {
-    if (selectedCompanies.length < 2) return;
-    setCompanyMergeTargetId(selectedIds.has(activeCompanyId) ? activeCompanyId : selectedCompanies[0]?.id ?? null);
-  }
-
-  function closeCompanyMerge() {
-    setCompanyMergeTargetId(null);
-  }
-
-  async function importIncorrectEmailsCsv(file: File) {
-    const text = await file.text();
-    const uploadedEmails = extractEmailsFromText(text);
-    const uploadedEmailSet = new Set(uploadedEmails);
-
-    if (uploadedEmails.length === 0) {
-      setIncorrectEmailMessage("No email addresses were found in that CSV.");
-      return;
-    }
-
-    const matchedEmails = new Set<string>();
-    const matchedPeople = new Map<string, Person>();
-
-    for (const { person } of peopleDirectory) {
-      const matchingPersonEmails = person.emails.filter((email) => uploadedEmailSet.has(email.toLowerCase()));
-      if (matchingPersonEmails.length === 0) continue;
-
-      matchingPersonEmails.forEach((email) => matchedEmails.add(email.toLowerCase()));
-      matchedPeople.set(person.id, {
-        ...person,
-        categories: normalizePersonCategories([...person.categories, INCORRECT_EMAIL_TAG]),
-      });
-    }
-
-    if (matchedPeople.size === 0) {
-      setIncorrectEmailMessage(`Found ${formatNumber(uploadedEmails.length)} email${uploadedEmails.length === 1 ? "" : "s"} in the CSV, but none matched current contacts.`);
-      return;
-    }
-
-    setIncorrectEmails((current) => new Set([...current, ...matchedEmails]));
-    setPeoplePage(1);
-    setPeopleQuery(INCORRECT_EMAIL_TAG);
-    matchedPeople.forEach((person) => {
-      updatePersonLocally(personSourceIds(person), {
-        displayName: person.displayName,
-        emails: person.emails,
-        categories: person.categories,
-      });
-      queuePersonUpdate(person, "Incorrect email tag", { syncEmails: false });
-    });
-
-    setIncorrectEmailMessage(
-      `Tagged ${formatNumber(matchedPeople.size)} contact${matchedPeople.size === 1 ? "" : "s"} from ${formatNumber(matchedEmails.size)} matching email${matchedEmails.size === 1 ? "" : "s"}.`,
-    );
-  }
-
-  function handleIncorrectEmailCsvUpload(file: File | null) {
-    if (!file) return;
-    void importIncorrectEmailsCsv(file);
-  }
-
-  function applyStage(nextStage: OutreachStage) {
-    const ids = selectedIds.size > 0 ? [...selectedIds] : activeCompany ? [activeCompany.id] : [];
-    updateCompanies((company) => (ids.includes(company.id) ? { ...company, outreachStage: nextStage } : company));
-
-    const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
-    ids.forEach((companyId) => {
-      queuePendingChange({
-        key: `stage:${companyId}`,
-        label: "Stage update",
-        record: {
-          kind: "stage",
-          key: `stage:${companyId}`,
-          label: "Stage update",
-          organizationId: organizationId ?? null,
-          companyIds: [companyId],
-          stage: nextStage,
-        },
-        run: () =>
-          initialData.authMode === "supabase" && organizationId && isUuid(companyId)
-            ? moveStageAction({ organizationId, companyIds: [companyId], stage: nextStage })
-            : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-      });
-    });
-  }
-
-  function applyBulkTag() {
-    const cleanTag = bulkTag.trim();
-    if (!cleanTag) return;
-    const ids = [...selectedIds];
-    const newTag: Tag = { id: `local-${cleanTag.toLowerCase().replace(/\s+/g, "-")}`, name: cleanTag, color: "#2563eb" };
-    updateCompanies((company) =>
-      ids.includes(company.id)
-        ? {
-            ...company,
-            tags: company.tags.some((item) => item.name === cleanTag) ? company.tags : [...company.tags, newTag],
-            people: applyCategoryToPeople(company.people, cleanTag),
-          }
-        : company,
-    );
-    setBulkTag("");
-
-    const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
-    queuePendingChange({
-      key: `company-tag:${cleanTag.toLowerCase()}:${ids.join(",")}`,
-      label: "Company tag update",
-      record: {
-        kind: "company-tag",
-        key: `company-tag:${cleanTag.toLowerCase()}:${ids.join(",")}`,
-        label: "Company tag update",
-        organizationId: organizationId ?? null,
-        companyIds: ids,
-        tagName: cleanTag,
-        color: newTag.color,
-      },
-      run: () =>
-        initialData.authMode === "supabase" && organizationId && ids.length > 0 && ids.every(isUuid)
-          ? addCompanyTagAction({ organizationId, companyIds: ids, tagName: cleanTag, color: newTag.color })
-          : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-    });
-  }
-
-  function toggleHighlight(companyId: string, person: Person) {
-    const targetPersonIds = personSourceIds(person);
-    updateCompanies((company) =>
-      company.id === companyId
-        ? {
-            ...company,
-            people: company.people.map((item) =>
-              item.sourcePersonIds.some((personId) => targetPersonIds.includes(personId)) ? { ...item, highlighted: !item.highlighted } : item,
-            ),
-          }
-        : company,
-    );
-
-    for (const personId of targetPersonIds) {
-      queuePendingChange({
-        key: `highlight:${companyId}:${personId}`,
-        label: "Highlight update",
-        record: {
-          kind: "highlight",
-          key: `highlight:${companyId}:${personId}`,
-          label: "Highlight update",
-          companyId,
-          personId,
-          highlighted: !person.highlighted,
-        },
-        run: () =>
-          initialData.authMode === "supabase" && isUuid(companyId) && isUuid(personId)
-            ? highlightPersonAction({ companyId, personId, highlighted: !person.highlighted })
-            : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-      });
-    }
-  }
-
-  function updateActiveCompany(field: "name" | "websites" | "description" | "country", value: string) {
-    if (!activeCompany) return;
-    const websites = field === "websites" ? normalizeCompanyWebsites(value) : [];
-    const nextValue = field === "name" ? value.trim() : field === "websites" ? websites.join("\n") : value.trim() || null;
-    const currentValue = field === "name" ? activeCompany.name : field === "websites" ? activeCompany.websiteDomains.join("\n") : activeCompany[field] ?? null;
-    if (field === "name" && !nextValue) {
-      setCompanyDraft((current) => ({ ...current, companyId: activeCompany.id, name: activeCompany.name }));
-      return;
-    }
-    if (nextValue === currentValue) return;
-
-    updateCompanies((company) =>
-      company.id === activeCompany.id
-        ? field === "websites"
-          ? { ...company, websiteDomain: websites[0] ?? null, websiteDomains: websites }
-          : { ...company, [field]: nextValue }
-        : company,
-    );
-
-    const payload = field === "websites" ? { companyId: activeCompany.id, websiteDomains: websites } : { companyId: activeCompany.id, [field]: nextValue };
-    queuePendingChange({
-      key: `company:${activeCompany.id}:${field}`,
-      label: "Company detail update",
-      record: {
-        kind: "company-update",
-        key: `company:${activeCompany.id}:${field}`,
-        label: "Company detail update",
-        payload,
-      },
-      run: () =>
-        initialData.authMode === "supabase" && isUuid(activeCompany.id)
-          ? updateCompanyAction(payload)
-          : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-    });
-  }
-
-  function updateCompanyEnrichmentLocally(companyId: string, enrichment: CompanyEnrichment, tags: Tag[] = []) {
-    updateCompanies((company) => (company.id === companyId ? { ...company, enrichment, tags: uniqueTags([...company.tags, ...tags]) } : company));
-  }
-
-  function updateCompanyTagsLocally(companyId: string, tags: Tag[]) {
-    if (tags.length === 0) return;
-    updateCompanies((company) => (company.id === companyId ? { ...company, tags: uniqueTags([...company.tags, ...tags]) } : company));
-  }
-
-  function companyEnrichmentPayload(companyId: string, enrichment: CompanyEnrichment, reviewed: boolean) {
-    const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
-    return {
-      organizationId: organizationId ?? "",
-      companyId,
-      status: enrichment.status,
-      summary: enrichment.summary,
-      industry: enrichment.industry,
-      subsector: enrichment.subsector,
-      companyType: enrichment.companyType,
-      location: enrichment.location,
-      keywords: enrichment.keywords,
-      sourceUrl: enrichment.sourceUrl,
-      model: enrichment.model,
-      confidence: enrichment.confidence,
-      errorMessage: enrichment.errorMessage,
-      generatedAt: enrichment.generatedAt,
-      reviewed,
-    };
-  }
-
-  function queueCompanyEnrichmentUpdate(companyId: string, enrichment: CompanyEnrichment, label: string, reviewed: boolean) {
-    const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
-    const payload = companyEnrichmentPayload(companyId, enrichment, reviewed);
-    queuePendingChange({
-      key: `company-enrichment:${companyId}`,
-      label,
-      record: {
-        kind: "company-enrichment-update",
-        key: `company-enrichment:${companyId}`,
-        label,
-        payload,
-      },
-      run: () =>
-        initialData.authMode === "supabase" && organizationId && isUuid(companyId)
-          ? updateCompanyEnrichmentAction(payload)
-          : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-    });
-  }
-
-  function saveActiveCompanyEnrichment() {
-    if (!activeCompany || !activeCompanyEnrichmentDraft) return;
-    const enrichment: CompanyEnrichment = {
-      ...(activeCompany.enrichment ?? defaultCompanyEnrichment(activeCompany)),
-      status: "needs_review",
-      summary: activeCompanyEnrichmentDraft.summary.trim() || null,
-      industry: activeCompanyEnrichmentDraft.industry.trim() || null,
-      subsector: activeCompanyEnrichmentDraft.subsector.trim() || null,
-      companyType: activeCompanyEnrichmentDraft.companyType.trim() || null,
-      location: activeCompanyEnrichmentDraft.location.trim() || null,
-      keywords: normalizeEnrichmentKeywords(activeCompanyEnrichmentDraft.keywords),
-      reviewedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    updateCompanyEnrichmentLocally(activeCompany.id, enrichment);
-    queueCompanyEnrichmentUpdate(activeCompany.id, enrichment, "Company enrichment update", true);
-  }
-
-  async function enrichActiveCompany(force = false) {
-    if (!activeCompany || isEnriching) return;
-    setIsEnriching(true);
-    setBatchProgress(null);
-    setEnrichmentMessage(`Enriching ${activeCompany.name} with local Ollama...`);
-    try {
-      const response = await fetch("/api/enrichment/company", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ companyId: activeCompany.id, force }),
-      });
-      const payload = (await response.json()) as EnrichmentApiResponse;
-      if (!response.ok) {
-        setEnrichmentMessage(payload.error ?? "Company enrichment failed.");
-        return;
-      }
-      const responseTags = enrichmentResponseTags(payload.tags, payload.tagNames);
-      if (payload.skipped) {
-        updateCompanyTagsLocally(activeCompany.id, payload.tags ?? []);
-        setEnrichmentMessage("Company already has completed enrichment. Use retry to force a refresh.");
-        return;
-      }
-      if (payload.enrichment) {
-        updateCompanyEnrichmentLocally(activeCompany.id, payload.enrichment, responseTags);
-        setEnrichmentDraft(enrichmentDraftForCompany({ ...activeCompany, enrichment: payload.enrichment }));
-        setEnrichmentMessage(payload.enrichment.status === "completed" ? "Company enrichment saved." : `Enrichment needs review: ${payload.enrichment.errorMessage ?? "No website text found."}`);
-      }
-    } catch (error) {
-      setEnrichmentMessage(error instanceof Error ? error.message : "Company enrichment failed.");
-    } finally {
-      setIsEnriching(false);
-    }
-  }
-
-  function requestStopEnrichmentBatch() {
-    stopBatchRef.current = true;
-    batchAbortControllerRef.current?.abort();
-    setBatchProgress((current) => (current ? { ...current, stopRequested: true, currentName: "Stopping..." } : current));
-    setEnrichmentMessage("Stopping enrichment batch...");
-  }
-
-  async function enrichCompanyBatch(targetCompanies: Company[]) {
-    if (targetCompanies.length === 0 || isEnriching) return;
-    setIsEnriching(true);
-    stopBatchRef.current = false;
-    let completed = 0;
-    let skipped = 0;
-    let failed = 0;
-    let stopped = false;
-    setBatchProgress({
-      total: targetCompanies.length,
-      completed,
-      skipped,
-      failed,
-      currentName: null,
-      stopRequested: false,
-      stopped: false,
-    });
-
-    for (const company of targetCompanies) {
-      if (stopBatchRef.current) {
-        stopped = true;
-        break;
-      }
-
-      setEnrichmentMessage(`Enriching ${completed + skipped + failed + 1} of ${targetCompanies.length}: ${company.name}`);
-      setBatchProgress({
-        total: targetCompanies.length,
-        completed,
-        skipped,
-        failed,
-        currentName: company.name,
-        stopRequested: false,
-        stopped: false,
-      });
-      const abortController = new AbortController();
-      batchAbortControllerRef.current = abortController;
-
-      try {
-        const response = await fetch("/api/enrichment/company", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ companyId: company.id, force: false, persist: false }),
-          signal: abortController.signal,
-        });
-        const payload = (await response.json()) as EnrichmentApiResponse;
-        const responseTags = enrichmentResponseTags(payload.tags, payload.tagNames);
-        if (!response.ok) {
-          failed += 1;
-        } else if (payload.skipped) {
-          updateCompanyTagsLocally(company.id, payload.tags ?? []);
-          skipped += 1;
-        } else if (payload.enrichment) {
-          updateCompanyEnrichmentLocally(company.id, payload.enrichment, responseTags);
-          queueCompanyEnrichmentUpdate(company.id, payload.enrichment, "Company enrichment generated", false);
-          completed += 1;
-        } else {
-          failed += 1;
-        }
-      } catch (error) {
-        if (stopBatchRef.current || (error instanceof DOMException && error.name === "AbortError")) {
-          stopped = true;
-          break;
-        }
-        failed += 1;
-      } finally {
-        batchAbortControllerRef.current = null;
-        setBatchProgress((current) =>
-          current
-            ? {
-                ...current,
-                completed,
-                skipped,
-                failed,
-                currentName: null,
-              }
-            : current,
-        );
-      }
-    }
-
-    const processed = completed + skipped + failed;
-    const statusText = stopped ? `Enrichment stopped after ${processed} of ${targetCompanies.length}` : "Enrichment finished";
-    setBatchProgress({
-      total: targetCompanies.length,
-      completed,
-      skipped,
-      failed,
-      currentName: null,
-      stopRequested: false,
-      stopped,
-    });
-    setEnrichmentMessage(`${statusText}: ${completed} queued${skipped ? `, ${skipped} skipped` : ""}${failed ? `, ${failed} failed` : ""}.`);
-    stopBatchRef.current = false;
-    batchAbortControllerRef.current = null;
-    setIsEnriching(false);
-  }
-
-  function addCreatedCompanyLocally(companyId: string, name: string, websites: string, country: string, category: string) {
-    if (companies.some((company) => company.id === companyId)) return;
-    const websiteDomains = normalizeCompanyWebsites(websites);
-    const newCompany: Company = {
-      id: companyId,
-      name,
-      normalizedName: name.toLowerCase(),
-      websiteDomain: websiteDomains[0] ?? null,
-      websiteDomains,
-      description: null,
-      country: country.trim() || null,
-      categories: [category],
-      status: "active",
-      ownerName: initialData.currentUserName,
-      sourceQuality: "review",
-      outreachStage: "Research",
-      tags: [],
-      people: [],
-      activities: [],
-      nextTask: null,
-      lastActivityAt: null,
-      mergeConfidence: null,
-      enrichment: null,
-      investmentRelationships: [],
-    };
-    setCompanies((current) => [newCompany, ...current]);
-  }
-
-  function addCreatedPersonLocally(companyId: string | null, personId: string, displayName: string, email: string, jobTitle: string) {
-    if (!companyId || !displayName.trim()) return;
-    const person: Person = {
-      id: personId,
-      sourcePersonIds: [personId],
-      displayName: displayName.trim(),
-      firstName: null,
-      lastName: null,
-      email: email.trim() || null,
-      emails: email.trim() ? [email.trim().toLowerCase()] : [],
-      phone: null,
-      linkedinUrl: null,
-      jobTitle: jobTitle.trim() || null,
-      country: null,
-      categories: [],
-      connectionStrength: "Manual",
-      highlighted: false,
-      investmentRelationships: [],
-    };
-    setCompanies((current) =>
-      current.map((company) => (company.id === companyId ? { ...company, people: company.people.some((item) => item.id === personId) ? company.people : [person, ...company.people] } : company)),
-    );
-  }
-
-  async function splitPeopleNames() {
-    const targetPeople = peopleDirectory.map((row) => row.person).filter((person) => !person.firstName);
-    if (targetPeople.length === 0) {
-      setNamesMessage("No contacts to split.");
-      return;
-    }
-
-    setIsSplittingNames(true);
-    setNamesMessage(null);
-    stopBatchRef.current = false;
-    let completed = 0;
-    let failed = 0;
-    setSplitNamesProgress({ total: targetPeople.length, completed, failed });
-
-    for (const person of targetPeople) {
-      if (stopBatchRef.current) break;
-
-      setNamesMessage(`Splitting ${completed + failed + 1} of ${targetPeople.length}: ${person.displayName}`);
-      setSplitNamesProgress({ total: targetPeople.length, completed, failed });
-
-      try {
-        const response = await fetch("/api/enrichment/split-name", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ displayName: person.displayName }),
-        });
-
-        if (!response.ok) {
-          failed += 1;
-          continue;
-        }
-
-        const { firstName, lastName } = (await response.json()) as { firstName: string; lastName: string };
-        const sourceIds = personSourceIds(person);
-        updatePersonLocally(sourceIds, { firstName, lastName });
-
-        const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
-        if (organizationId && isUuid(person.id)) {
-          queuePendingChange({
-            key: `person:${person.id}`,
-            label: "Contact name split",
-            type: "person",
-            personUpdate: {
-              organizationId,
-              personId: person.id,
-              displayName: person.displayName,
-              firstName,
-              lastName,
-              categories: person.categories,
-            },
-            record: {
-              kind: "person",
-              key: `person:${person.id}`,
-              label: "Contact name split",
-              personUpdate: {
-                organizationId,
-                personId: person.id,
-                displayName: person.displayName,
-                firstName,
-                lastName,
-                categories: person.categories,
-              },
-            },
-            run: () =>
-              initialData.authMode === "supabase" && organizationId && isUuid(person.id)
-                ? updatePersonAction({
-                  organizationId,
-                  personId: person.id,
-                  displayName: person.displayName,
-                  firstName,
-                  lastName,
-                  categories: person.categories,
-                  emails: [],
-                })
-                : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-          });
-        }
-
-        completed += 1;
-      } catch {
-        if (stopBatchRef.current) break;
-        failed += 1;
-      }
-
-      setSplitNamesProgress({ total: targetPeople.length, completed, failed });
-    }
-
-    setNamesMessage(`Name splitting done: ${completed} split${failed ? `, ${failed} failed` : ""}. Queue changes before pushing.`);
-    setSplitNamesProgress(null);
-    setIsSplittingNames(false);
-  }
-
-  function updateRelationshipInList(relationships: InvestmentRelationship[], relationship: InvestmentRelationship) {
-    const existingIndex = relationships.findIndex((item) => relationshipMatches(item, relationship.companyId, relationship.personId) || item.id === relationship.id);
-    if (existingIndex === -1) return [...relationships, relationship];
-    const next = [...relationships];
-    next[existingIndex] = relationship;
-    return next;
-  }
-
-  function updateInvestmentRelationshipLocally(relationship: InvestmentRelationship) {
-    updateCompanies((company) => ({
-      ...company,
-      investmentRelationships: relationship.companyId === company.id ? updateRelationshipInList(company.investmentRelationships, relationship) : company.investmentRelationships,
-      people: company.people.map((person) =>
-        relationship.personId === person.id
-          ? {
-              ...person,
-              investmentRelationships: updateRelationshipInList(person.investmentRelationships, relationship),
-            }
-          : person,
-      ),
-    }));
-  }
-
-  function updateDealStatusInRelationships(relationships: InvestmentRelationship[], dealId: string, status: InvestmentDealStatus) {
-    return relationships.map((relationship) => ({
-      ...relationship,
-      deals: relationship.deals.map((deal) => (deal.id === dealId ? { ...deal, status } : deal)),
-    }));
-  }
-
-  function updateInvestmentDealStatusLocally(companyId: string, dealId: string, status: InvestmentDealStatus, summary: string) {
-    const now = new Date().toISOString();
-    const activityId = `local-status-${companyId}-${dealId}`;
-    updateCompanies((company) => ({
-      ...company,
-      investmentRelationships: updateDealStatusInRelationships(company.investmentRelationships, dealId, status),
-      people: company.people.map((person) => ({
-        ...person,
-        investmentRelationships: updateDealStatusInRelationships(person.investmentRelationships, dealId, status),
-      })),
-      activities:
-        company.id === companyId
-          ? [
-              { id: activityId, type: "status_change", summary, occurredAt: now },
-              ...company.activities.filter((activity) => activity.id !== activityId),
-            ]
-          : company.activities,
-      lastActivityAt: company.id === companyId ? now : company.lastActivityAt,
-    }));
-  }
-
-  function saveInvestmentRelationship(relationship: InvestmentRelationship, draft: InvestmentDraft, label: string) {
-    const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
-    const nextRelationship: InvestmentRelationship = {
-      ...relationship,
-      investmentStatus: draft.investmentStatus,
-      capacityStatus: draft.capacityStatus,
-      notes: draft.notes.trim() || null,
-      lastInvestedDate: draft.lastInvestedDate || null,
-    };
-    updateInvestmentRelationshipLocally(nextRelationship);
-
-    const payload = {
-      organizationId: organizationId ?? "",
-      relationshipId: isUuid(relationship.id) ? relationship.id : undefined,
-      companyId: relationship.companyId,
-      personId: relationship.personId,
-      investmentStatus: nextRelationship.investmentStatus,
-      capacityStatus: nextRelationship.capacityStatus,
-      notes: nextRelationship.notes,
-      lastInvestedDate: nextRelationship.lastInvestedDate,
-    };
-
-    queuePendingChange({
-      key: `investment:${relationship.companyId ?? "none"}:${relationship.personId ?? "none"}`,
-      label,
-      record: {
-        kind: "investment-relationship",
-        key: `investment:${relationship.companyId ?? "none"}:${relationship.personId ?? "none"}`,
-        label,
-        payload,
-      },
-      run: () =>
-        initialData.authMode === "supabase" && organizationId
-          ? updateInvestmentRelationshipAction(payload)
-          : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-    });
-  }
-
-  function addInvestmentDealLocally(relationship: InvestmentRelationship, draft: InvestmentDraft, label: string) {
-    const dealName = draft.dealName.trim();
-    if (!dealName) return;
-    const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
-    const localDealId = `local-deal-${relationship.id}-${dealName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${relationship.deals.length}`;
-    const nextRelationship: InvestmentRelationship = {
-      ...relationship,
-      investmentStatus: draft.investmentStatus,
-      capacityStatus: draft.capacityStatus,
-      notes: draft.notes.trim() || relationship.notes,
-      lastInvestedDate: draft.dealDate || draft.lastInvestedDate || relationship.lastInvestedDate,
-      deals: [
-        {
-          id: localDealId,
-          name: dealName,
-          status: draft.dealStatus,
-          investedAt: draft.dealDate || null,
-          role: draft.dealRole.trim() || null,
-          notes: draft.dealNotes.trim() || null,
-        },
-        ...relationship.deals,
-      ],
-    };
-    updateInvestmentRelationshipLocally(nextRelationship);
-
-    const payload = {
-      organizationId: organizationId ?? "",
-      relationshipId: isUuid(relationship.id) ? relationship.id : undefined,
-      companyId: relationship.companyId,
-      personId: relationship.personId,
-      investmentStatus: draft.investmentStatus,
-      capacityStatus: draft.capacityStatus,
-      relationshipNotes: draft.notes.trim() || null,
-      dealName,
-      dealStatus: draft.dealStatus,
-      investedAt: draft.dealDate || null,
-      role: draft.dealRole.trim() || null,
-      notes: draft.dealNotes.trim() || null,
-    };
-    const key = `investment-deal:${relationship.companyId ?? "none"}:${relationship.personId ?? "none"}:${localDealId}`;
-
-    queuePendingChange({
-      key,
-      label,
-      record: {
-        kind: "investment-deal",
-        key,
-        label,
-        payload,
-        localDeal: {
-          companyId: relationship.companyId,
-          personId: relationship.personId,
-          relationshipId: relationship.id,
-          dealId: localDealId,
-          dealName,
-          dealStatus: draft.dealStatus,
-          investedAt: draft.dealDate || null,
-          role: draft.dealRole.trim() || null,
-          notes: draft.dealNotes.trim() || null,
-        },
-      },
-      run: () =>
-        initialData.authMode === "supabase" && organizationId
-          ? addInvestmentDealAction(payload)
-          : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-    });
-  }
-
-  function updatePipelineDraft(row: DealPipelineRow, updates: Partial<PipelineStatusDraft>) {
-    setPipelineDrafts((current) => ({
-      ...current,
-      [row.key]: {
-        status: current[row.key]?.status ?? row.status,
-        note: current[row.key]?.note ?? "",
-        ...updates,
-      },
-    }));
-  }
-
-  function queueDealStatusUpdate(row: DealPipelineRow) {
-    const draft = pipelineDrafts[row.key] ?? { status: row.status, note: "" };
-    const note = draft.note.trim();
-    const statusChanged = draft.status !== row.status;
-    if (!statusChanged && !note) return;
-
-    const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
-    const summary = formatDealStatusSummary(row.dealName, row.status, draft.status);
-    const payload = {
-      organizationId: organizationId ?? "",
-      companyId: row.companyId,
-      dealId: row.dealId,
-      status: draft.status,
-      note: note || null,
-    };
-
-    updateInvestmentDealStatusLocally(row.companyId, row.dealId, draft.status, summary);
-    queuePendingChange({
-      key: `investment-deal-status:${row.companyId}:${row.dealId}`,
-      label: "Deal status update",
-      record: {
-        kind: "investment-deal-status",
-        key: `investment-deal-status:${row.companyId}:${row.dealId}`,
-        label: "Deal status update",
-        payload,
-      },
-      run: () =>
-        initialData.authMode === "supabase" && organizationId && isUuid(row.companyId) && isUuid(row.dealId)
-          ? updateInvestmentDealStatusAction(payload)
-          : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-    });
-    setPipelineDrafts((current) => {
-      const next = { ...current };
-      delete next[row.key];
-      return next;
-    });
-  }
-
-  function updatePersonLocally(targetPersonIds: string[], updates: Partial<Pick<Person, "displayName" | "firstName" | "lastName" | "emails" | "jobTitle" | "linkedinUrl" | "phone" | "country" | "categories" | "investmentRelationships">>) {
-    const personIdSet = new Set(targetPersonIds);
-    updateCompanies((company) => ({
-      ...company,
-      people: company.people.map((person) =>
-        person.sourcePersonIds.some((personId) => personIdSet.has(personId))
-          ? {
-              ...person,
-              ...(updates.displayName !== undefined ? { displayName: updates.displayName } : {}),
-              ...(updates.firstName !== undefined ? { firstName: updates.firstName } : {}),
-              ...(updates.lastName !== undefined ? { lastName: updates.lastName } : {}),
-              ...(updates.emails !== undefined ? { email: updates.emails[0] ?? null, emails: updates.emails } : {}),
-              ...(updates.jobTitle !== undefined ? { jobTitle: updates.jobTitle } : {}),
-              ...(updates.linkedinUrl !== undefined ? { linkedinUrl: updates.linkedinUrl } : {}),
-              ...(updates.phone !== undefined ? { phone: updates.phone } : {}),
-              ...(updates.country !== undefined ? { country: updates.country } : {}),
-              ...(updates.categories !== undefined ? { categories: updates.categories } : {}),
-              ...(updates.investmentRelationships !== undefined ? { investmentRelationships: updates.investmentRelationships } : {}),
-            }
-          : person,
-      ),
-    }));
-  }
-
-  function applyCategoryToPeople(people: Person[], category: string, previousCategory?: string) {
-    return people.map((person) => {
-      const renamedCategories = previousCategory
-        ? person.categories.map((item) => (item === previousCategory ? category : item))
-        : person.categories;
-      return {
-        ...person,
-        categories: normalizePersonCategories([...renamedCategories, category]),
-      };
-    });
-  }
-
-  function renameCompanyTag(summary: Extract<TagSummary, { type: "company" }>, nextName: string) {
-    const cleanName = nextName.trim();
-    if (!cleanName || cleanName === summary.name) return;
-    const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
-
-    updateCompanies((company) => ({
-      ...company,
-      tags: company.tags.map((tag) => (tag.id === summary.id ? { ...tag, name: cleanName } : tag)),
-      people: company.tags.some((tag) => tag.id === summary.id) ? applyCategoryToPeople(company.people, cleanName, summary.name) : company.people,
-    }));
-
-    queuePendingChange({
-      key: `company-tag-rename:${summary.id}`,
-      label: "Company tag rename",
-      record: {
-        kind: "company-tag-rename",
-        key: `company-tag-rename:${summary.id}`,
-        label: "Company tag rename",
-        organizationId: organizationId ?? null,
-        tagId: summary.id,
-        name: cleanName,
-      },
-      run: () =>
-        initialData.authMode === "supabase" && organizationId && isUuid(summary.id)
-          ? renameCompanyTagAction({ organizationId, tagId: summary.id, name: cleanName })
-          : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-    });
-    setTagDrafts((current) => ({ ...current, [summary.key]: cleanName }));
-  }
-
-  function renameContactTag(summary: Extract<TagSummary, { type: "contact" }>, nextName: string) {
-    const cleanName = nextName.trim();
-    if (!cleanName || cleanName === summary.name) return;
-    const oldName = summary.name;
-    const affectedPeople = peopleDirectory
-      .map(({ person }) =>
-        person.categories.some((category) => category === oldName)
-          ? {
-              ...person,
-              categories: normalizePersonCategories(person.categories.map((category) => (category === oldName ? cleanName : category))),
-            }
-          : null,
-      )
-      .filter((person): person is Person => Boolean(person));
-
-    if (affectedPeople.length === 0) return;
-
-    affectedPeople.forEach((person) => {
-      updatePersonLocally(personSourceIds(person), {
-        displayName: person.displayName,
-        emails: person.emails,
-        categories: person.categories,
-      });
-      queuePersonUpdate(person, "Contact tag rename", { syncEmails: false });
-    });
-    setTagDrafts((current) => ({ ...current, [summary.key]: cleanName }));
-  }
-
-  function renameTag(summary: TagSummary) {
-    const nextName = tagDrafts[summary.key] ?? summary.name;
-    if (summary.type === "company") renameCompanyTag(summary, nextName);
-    else renameContactTag(summary, nextName);
-  }
-
-  function addManualNote() {
-    if (!activeCompany || !noteText.trim()) return;
-    const summary = noteText.trim();
-    const actionKey = `activity:${activeCompany.id}:${Date.now()}`;
-    updateCompanies((company) =>
-      company.id === activeCompany.id
-        ? {
-            ...company,
-            activities: [{ id: `local-${Date.now()}`, type: "note", summary, occurredAt: new Date().toISOString() }, ...company.activities],
-            lastActivityAt: new Date().toISOString(),
-          }
-        : company,
-    );
-    setNoteText("");
-
-    const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
-    const companyId = activeCompany.id;
-    queuePendingChange({
-      key: actionKey,
-      label: "Activity note",
-      record: {
-        kind: "activity-note",
-        key: actionKey,
-        label: "Activity note",
-        organizationId: organizationId ?? null,
-        companyId,
-        summary,
-      },
-      run: () =>
-        initialData.authMode === "supabase" && organizationId && isUuid(companyId)
-          ? addActivityAction({
-          organizationId,
-          companyId,
-          activityType: "note",
-          summary,
-        })
-          : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-    });
-  }
-
-  function mergeCompaniesLocally(targetCompanyId: string, sourceCompanyIds: string[]) {
-    setCompanies((current) => {
-      const target = current.find((company) => company.id === targetCompanyId);
-      const sources = sourceCompanyIds
-        .map((companyId) => current.find((company) => company.id === companyId))
-        .filter((company): company is Company => Boolean(company));
-
-      if (!target || sources.length === 0) return current;
-
-      const mergedCompany = mergeCompanyDetails(target, sources);
-      const sourceIdSet = new Set(sourceCompanyIds);
-
-      return current
-        .filter((company) => !sourceIdSet.has(company.id))
-        .map((company) => (company.id === targetCompanyId ? mergedCompany : company));
-    });
-    setSelectedIds(new Set([targetCompanyId]));
-    setActiveCompanyId(targetCompanyId);
-    setCompanyDraft({ companyId: "", name: "", websites: "", description: "", country: "" });
-  }
-
-  function handleCompanyMerge() {
-    if (!companyMergeTarget || companyMergeSources.length === 0) return;
-
-    const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
-    const targetCompanyId = companyMergeTarget.id;
-    const sourceCompanyIds = companyMergeSources.map((company) => company.id);
-
-    mergeCompaniesLocally(targetCompanyId, sourceCompanyIds);
-    queuePendingChange({
-      key: `company-merge:${targetCompanyId}:${sourceCompanyIds.join(",")}`,
-      label: "Company merge",
-      record: {
-        kind: "company-merge",
-        key: `company-merge:${targetCompanyId}:${sourceCompanyIds.join(",")}`,
-        label: "Company merge",
-        organizationId: organizationId ?? null,
-        targetCompanyId,
-        sourceCompanyIds,
-      },
-      run: () =>
-        initialData.authMode === "supabase" && organizationId && isUuid(targetCompanyId) && sourceCompanyIds.every(isUuid)
-          ? mergeCompaniesAction({ organizationId, targetCompanyId, sourceCompanyIds })
-          : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-    });
-    closeCompanyMerge();
-  }
-
-  function mergePeopleLocally(targetPersonId: string, sourcePersonId: string) {
-    const targetEntry = peopleDirectory.find(({ person }) => person.id === targetPersonId);
-    const sourceEntry = peopleDirectory.find(({ person }) => person.id === sourcePersonId);
-    if (!targetEntry || !sourceEntry) return;
-
-    const mergedGlobalPerson = mergePersonDetails(targetEntry.person, sourceEntry.person, targetPersonId);
-    setCompanies((current) =>
-      current.map((company) => {
-        const targetPerson = company.people.find((person) => person.id === targetPersonId) ?? null;
-        const sourcePerson = company.people.find((person) => person.id === sourcePersonId) ?? null;
-        if (!targetPerson && !sourcePerson) return company;
-
-        const mergedCompanyPerson = targetPerson && sourcePerson
-          ? mergePersonDetails(targetPerson, sourcePerson, targetPersonId)
-          : targetPerson
-            ? mergePersonDetails(targetPerson, mergedGlobalPerson, targetPersonId)
-            : mergePersonDetails(mergedGlobalPerson, sourcePerson!, targetPersonId);
-
-        const nextPeople: Person[] = [];
-        let inserted = false;
-        for (const person of company.people) {
-          if (person.id === targetPersonId || person.id === sourcePersonId) {
-            if (!inserted) {
-              nextPeople.push(mergedCompanyPerson);
-              inserted = true;
-            }
-            continue;
-          }
-          nextPeople.push(person);
-        }
-
-        if (!inserted) nextPeople.push(mergedCompanyPerson);
-        return { ...company, people: nextPeople };
-      }),
-    );
-  }
-
-  function startManualMerge(targetPersonId: string, searchHint = "") {
-    setPeopleMessage(null);
-    setPersonMergeTargetId(targetPersonId);
-    setPersonMergeQuery(searchHint);
-  }
-
-  function closeManualMerge() {
-    setPersonMergeTargetId(null);
-    setPersonMergeQuery("");
-  }
-
-  function handleManualMerge(sourcePersonId: string) {
-    if (!personMergeTarget || sourcePersonId === personMergeTarget.person.id) return;
-
-    const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
-    const targetPersonId = personMergeTarget.person.id;
-
-    mergePeopleLocally(targetPersonId, sourcePersonId);
-    queuePendingChange({
-      key: `merge:${targetPersonId}:${sourcePersonId}`,
-      label: "People merge",
-      runBeforePersonBatch: true,
-      record: {
-        kind: "people-merge",
-        key: `merge:${targetPersonId}:${sourcePersonId}`,
-        label: "People merge",
-        organizationId: organizationId ?? null,
-        targetPersonId,
-        sourcePersonId,
-      },
-      run: () =>
-        initialData.authMode === "supabase" && organizationId && isUuid(targetPersonId) && isUuid(sourcePersonId)
-          ? mergePeopleAction({ organizationId, targetPersonId, sourcePersonId })
-          : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-    });
-    setPeopleMessage("People merge queued locally.");
-    closeManualMerge();
-  }
 
   return (
     <div className="app-shell">
@@ -1497,7 +295,7 @@ export function CrmShell({
 
         <MetricsGrid importSummary={initialData.importSummary} />
 
-        <PipelineStrip pipelineCounts={pipelineCounts} stageFilters={stageFilters} onStageClick={(stage) => { toggleCompanyFilter(setStageFilters, stage); setActiveView("companies"); }} />
+        <PipelineStrip pipelineCounts={pipelineCounts} stageFilters={stageFilters} onStageClick={(stage) => { setStageFilters((current) => { const next = new Set(current); if (next.has(stage)) next.delete(stage); else next.add(stage); return next; }); setActiveView("companies"); }} />
 
         {activeView === "companies" ? (
           <CompaniesView
@@ -1524,8 +322,8 @@ export function CrmShell({
             batchTargetCompanies={batchTargetCompanies}
             isBatchEnriching={isBatchEnriching}
             batchProgress={batchProgress}
-            batchProgressPercent={batchProgressPercent}
-            batchProgressProcessed={batchProgressProcessed}
+            batchProgressPercent={batchPercent}
+            batchProgressProcessed={batchProcessed}
             pendingEnrichmentCount={pendingEnrichmentCount}
             isRefreshingTable={isRefreshingTable}
             isEnriching={isEnriching}
@@ -1558,10 +356,10 @@ export function CrmShell({
             onSetExportValue={setExportValue}
             onSetBulkTag={setBulkTag}
             onToggleCompany={toggleCompany}
-            onToggleStageFilter={(value) => toggleCompanyFilter(setStageFilters, value)}
-            onToggleCountryFilter={(value) => toggleCompanyFilter(setCountryFilters, value)}
-            onToggleTagFilter={(value) => toggleCompanyFilter(setTagFilters, value)}
-            onToggleQualityFilter={(value) => toggleCompanyFilter(setQualityFilters, value)}
+            onToggleStageFilter={(value) => { setStageFilters((current) => { const next = new Set(current); if (next.has(value)) next.delete(value); else next.add(value); return next; }); setCompanyPage(1); }}
+            onToggleCountryFilter={(value) => { setCountryFilters((current) => { const next = new Set(current); if (next.has(value)) next.delete(value); else next.add(value); return next; }); setCompanyPage(1); }}
+            onToggleTagFilter={(value) => { setTagFilters((current) => { const next = new Set(current); if (next.has(value)) next.delete(value); else next.add(value); return next; }); setCompanyPage(1); }}
+            onToggleQualityFilter={(value) => { setQualityFilters((current) => { const next = new Set(current); if (next.has(value)) next.delete(value); else next.add(value); return next; }); setCompanyPage(1); }}
             onClearCompanyFilters={clearCompanyFilters}
             onRefreshCompanyTable={refreshCompanyTable}
             onApplyStage={applyStage}
@@ -1575,14 +373,11 @@ export function CrmShell({
             onExportCompanies={exportCompanies}
             onOpenCompanyModal={openCompanyModal}
             onSetActiveCompanyId={setActiveCompanyId}
-            onExportCriterionChange={(nextCriterion) => {
-              setExportCriterion(nextCriterion);
-              setExportValue(contactExportValues(companies, nextCriterion)[0] ?? "");
-            }}
+            onExportCriterionChange={(nextCriterion) => { setExportCriterion(nextCriterion); setExportValue(contactExportValues(companies, nextCriterion)[0] ?? ""); }}
             onCloseCompanyModal={closeCompanyModal}
             onUpdateActiveCompany={updateActiveCompany}
-            onEnrichActiveCompany={enrichActiveCompany}
-            onSaveActiveCompanyEnrichment={saveActiveCompanyEnrichment}
+            onEnrichActiveCompany={(force) => enrichActiveCompany(activeCompany, force)}
+            onSaveActiveCompanyEnrichment={() => saveActiveCompanyEnrichment(activeCompany, activeCompanyEnrichmentDraft)}
             onSaveInvestmentRelationship={saveInvestmentRelationship}
             onAddInvestmentDealLocally={addInvestmentDealLocally}
             onToggleHighlight={toggleHighlight}
@@ -1738,5 +533,3 @@ export function CrmShell({
     </div>
   );
 }
-
-
