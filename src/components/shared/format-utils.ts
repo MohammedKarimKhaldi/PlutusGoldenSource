@@ -59,3 +59,13 @@ export function searchTextMatches(text: string, query: string) {
   if (tokens.length === 0) return true;
   return tokens.every((token) => text.includes(token));
 }
+
+export function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+export function formatCompanyWebsites(company: { websiteDomains: string[]; country: string | null }) {
+  if (company.websiteDomains.length === 0) return company.country ?? "No domain";
+  if (company.websiteDomains.length === 1) return company.websiteDomains[0];
+  return `${company.websiteDomains[0]} +${company.websiteDomains.length - 1}`;
+}

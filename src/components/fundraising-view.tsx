@@ -46,11 +46,7 @@ import {
 
 // ── Local types ──
 
-type PeopleDirectoryRow = {
-  person: Person;
-  company: Company;
-  companies: Company[];
-};
+import type { PeopleDirectoryRow } from "@/components/shared";
 
 type FundraisingTab = "clients" | "targets" | "finance";
 

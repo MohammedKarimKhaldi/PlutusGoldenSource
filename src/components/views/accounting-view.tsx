@@ -1,6 +1,6 @@
 import { Check, CreditCard, Flag, Pencil, Search } from "lucide-react";
 import clsx from "clsx";
-import { FilterSelect, formatMinorMoney, formatDate, formatNumber, amountInputFromMinor, todayIsoDate } from "@/components/shared";
+import { FilterSelect, formatMinorMoney, formatDate, formatNumber, amountInputFromMinor, todayIsoDate, ACCOUNTING_DOCUMENT_TYPE_LABELS, ACCOUNTING_DOCUMENT_STATUS_LABELS, ACCOUNTING_LEDGER_ENTRY_TYPE_LABELS, ACCOUNTING_DIRECTION_LABELS } from "@/components/shared";
 import {
   ACCOUNTING_DOCUMENT_STATUSES,
   ACCOUNTING_DOCUMENT_TYPES,
@@ -18,64 +18,12 @@ import type {
   AccountingDirection,
   Company,
 } from "@/lib/types";
+import type {
+  AccountingDocumentDraft,
+  AccountingLedgerDraft,
+} from "@/components/shared";
 
-type AccountingDocumentDraft = {
-  documentId: string | null;
-  documentType: AccountingDocumentType;
-  status: Exclude<AccountingDocumentStatus, "void">;
-  companyId: string;
-  title: string;
-  amount: string;
-  currency: string;
-  issuedOn: string;
-  dueOn: string;
-  externalReference: string;
-  documentUrl: string;
-  notes: string;
-};
-
-type AccountingLedgerDraft = {
-  entryId: string | null;
-  documentId: string;
-  entryType: AccountingLedgerEntryType;
-  direction: AccountingDirection;
-  companyId: string;
-  amount: string;
-  currency: string;
-  occurredOn: string;
-  externalReference: string;
-  documentUrl: string;
-  notes: string;
-};
-
-const ACCOUNTING_DOCUMENT_TYPE_LABELS: Record<AccountingDocumentType, string> = {
-  retainer: "Retainer",
-  commission: "Cash commission",
-  expense: "Expense",
-  adjustment: "Adjustment",
-};
-
-const ACCOUNTING_DOCUMENT_STATUS_LABELS: Record<AccountingDocumentStatus, string> = {
-  draft: "Draft",
-  open: "Open",
-  partially_paid: "Part paid",
-  paid: "Paid",
-  void: "Void",
-};
-
-const ACCOUNTING_LEDGER_ENTRY_TYPE_LABELS: Record<AccountingLedgerEntryType, string> = {
-  retainer_payment: "Retainer payment",
-  commission_payment: "Commission payment",
-  expense_payment: "Expense payment",
-  adjustment: "Adjustment",
-};
-
-const ACCOUNTING_DIRECTION_LABELS: Record<AccountingDirection, string> = {
-  incoming: "Incoming",
-  outgoing: "Outgoing",
-};
-
-function defaultAccountingDocumentDraft(): AccountingDocumentDraft {
+export function defaultAccountingDocumentDraft(): AccountingDocumentDraft {
   return {
     documentId: null,
     documentType: "retainer",
@@ -92,7 +40,7 @@ function defaultAccountingDocumentDraft(): AccountingDocumentDraft {
   };
 }
 
-function defaultAccountingLedgerDraft(): AccountingLedgerDraft {
+export function defaultAccountingLedgerDraft(): AccountingLedgerDraft {
   return {
     entryId: null,
     documentId: "",
@@ -108,7 +56,7 @@ function defaultAccountingLedgerDraft(): AccountingLedgerDraft {
   };
 }
 
-function accountingDocumentDraftFromDocument(document: AccountingDocument): AccountingDocumentDraft {
+export function accountingDocumentDraftFromDocument(document: AccountingDocument): AccountingDocumentDraft {
   return {
     documentId: document.id,
     documentType: document.documentType,

@@ -1,12 +1,8 @@
 import { ChevronDown, Download, Flag, Pencil, Search, Star, Upload, UserRound } from "lucide-react";
 import clsx from "clsx";
-import { FilterSelect, formatNumber } from "@/components/shared";
+import { FilterSelect, formatNumber, PEOPLE_PAGE_SIZE_OPTIONS } from "@/components/shared";
 import { OUTREACH_STAGES } from "@/lib/types";
 import type { Company, Person } from "@/lib/types";
-
-type PeoplePageSize = 50 | 100 | 250 | 500 | 1000 | "all";
-
-const PEOPLE_PAGE_SIZE_OPTIONS = [50, 100, 250, 500, 1000, "all"] as const;
 
 export function PeopleView({
   filteredDirectory,

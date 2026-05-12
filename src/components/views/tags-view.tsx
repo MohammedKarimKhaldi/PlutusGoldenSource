@@ -1,10 +1,7 @@
 import { Check, Tags } from "lucide-react";
 import clsx from "clsx";
 import { formatNumber, formatChangeCount } from "@/components/shared";
-
-type TagSummary =
-  | { key: string; type: "company"; id: string; name: string; color: string; count: number }
-  | { key: string; type: "contact"; name: string; count: number };
+import type { TagSummary } from "@/components/shared";
 
 export function TagsView({
   tagSummaries,

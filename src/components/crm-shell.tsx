@@ -47,6 +47,18 @@ import {
   normalizeSearchValue,
   searchTokens,
   searchTextMatches,
+  SOURCE_QUALITY_LABELS,
+  INVESTMENT_STATUS_LABELS,
+  CAPACITY_STATUS_LABELS,
+  INVESTMENT_DEAL_STATUS_LABELS,
+  ACCOUNTING_DOCUMENT_TYPE_LABELS,
+  ACCOUNTING_DOCUMENT_STATUS_LABELS,
+  ACCOUNTING_LEDGER_ENTRY_TYPE_LABELS,
+  ACCOUNTING_DIRECTION_LABELS,
+  isUuid,
+  formatCompanyWebsites,
+  PEOPLE_PAGE_SIZE_OPTIONS,
+  relationshipChipLabel,
 } from "@/components/shared";
 
 import {
@@ -77,12 +89,13 @@ import { Sidebar } from "@/components/views/sidebar";
 import { CrmTopbar } from "@/components/views/crm-topbar";
 import { PipelineStrip } from "@/components/views/pipeline-strip";
 import { PipelineView } from "@/components/views/pipeline-view";
+import { CompanyDetailPanel } from "@/components/views/company-detail-panel";
 import { PeopleView } from "@/components/views/people-view";
 import { TagsView } from "@/components/views/tags-view";
 import { TasksView } from "@/components/views/tasks-view";
 import { ImportView } from "@/components/views/import-view";
 import { SyncDock } from "@/components/views/sync-dock";
-import { AccountingView } from "@/components/views/accounting-view";
+import { AccountingView, defaultAccountingDocumentDraft, defaultAccountingLedgerDraft, accountingDocumentDraftFromDocument } from "@/components/views/accounting-view";
 import { AccountingVoidDialog } from "@/components/views/accounting-void-dialog";
 import { ContactEditor } from "@/components/views/contact-editor";
 import { buildDealPipelineRows, groupDealPipelineRows, type DealPipelineRow } from "@/lib/deal-pipeline";
@@ -113,6 +126,16 @@ import type {
   Person,
   Tag,
 } from "@/lib/types";
+import type {
+  InvestmentDraft,
+  AccountingDocumentDraft,
+  AccountingLedgerDraft,
+  PipelineStatusDraft,
+  EnrichmentDraft,
+  TagSummary,
+  PeopleDirectoryRow,
+  PeoplePageSize,
+} from "@/components/shared";
 import {
   ACCOUNTING_DIRECTIONS,
   ACCOUNTING_DOCUMENT_STATUSES,
@@ -134,26 +157,6 @@ type CrmShellProps = {
 };
 
 export type ActiveView = "companies" | "people" | "tags" | "pipeline" | "clients" | "tasks" | "import" | "accounting";
-type PeopleDirectoryRow = {
-  person: Person;
-  company: Company;
-  companies: Company[];
-};
-type TagSummary =
-  | {
-      key: string;
-      type: "company";
-      id: string;
-      name: string;
-      color: string;
-      count: number;
-    }
-  | {
-      key: string;
-      type: "contact";
-      name: string;
-      count: number;
-    };
 type ActionResult = {
   ok: boolean;
   message: string;
@@ -292,15 +295,6 @@ type DebugDraft = {
   pendingChanges: PendingChangeRecord[];
   syncMessage: string | null;
 };
-type EnrichmentDraft = {
-  companyId: string;
-  summary: string;
-  industry: string;
-  subsector: string;
-  companyType: string;
-  location: string;
-  keywords: string;
-};
 type EnrichmentApiResponse = {
   enrichment?: CompanyEnrichment;
   skipped?: boolean;
@@ -309,46 +303,7 @@ type EnrichmentApiResponse = {
   tagNames?: string[];
   tags?: Tag[];
 };
-type InvestmentDraft = {
-  targetKey: string;
-  investmentStatus: InvestmentStatus;
-  capacityStatus: CapacityStatus;
-  notes: string;
-  lastInvestedDate: string;
-  dealName: string;
-  dealStatus: InvestmentDealStatus;
-  dealDate: string;
-  dealRole: string;
-  dealNotes: string;
-};
 type AccountingTab = "documents" | "ledger";
-type AccountingDocumentDraft = {
-  documentId: string | null;
-  documentType: AccountingDocumentType;
-  status: Exclude<AccountingDocumentStatus, "void">;
-  companyId: string;
-  title: string;
-  amount: string;
-  currency: string;
-  issuedOn: string;
-  dueOn: string;
-  externalReference: string;
-  documentUrl: string;
-  notes: string;
-};
-type AccountingLedgerDraft = {
-  entryId: string | null;
-  documentId: string;
-  entryType: AccountingLedgerEntryType;
-  direction: AccountingDirection;
-  companyId: string;
-  amount: string;
-  currency: string;
-  occurredOn: string;
-  externalReference: string;
-  documentUrl: string;
-  notes: string;
-};
 type AccountingRecordActionTarget = {
   action: "void" | "delete";
   entityType: "document" | "ledger_entry";
@@ -356,10 +311,6 @@ type AccountingRecordActionTarget = {
   title: string;
 };
 
-type PipelineStatusDraft = {
-  status: InvestmentDealStatus;
-  note: string;
-};
 type EnrichmentBatchProgress = {
   total: number;
   completed: number;
@@ -373,74 +324,9 @@ type EnrichmentBatchProgress = {
 const INCORRECT_EMAIL_TAG = "Incorrect email";
 const EMAIL_IN_TEXT_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 
-const SOURCE_QUALITY_LABELS = {
-  high: "High",
-  medium: "Medium",
-  low: "Low",
-  review: "Review",
-};
-
-const INVESTMENT_STATUS_LABELS: Record<InvestmentStatus, string> = {
-  prospect: "Prospect",
-  past_investor: "Past investor",
-  current_investor: "Current investor",
-};
-
-const CAPACITY_STATUS_LABELS: Record<CapacityStatus, string> = {
-  unknown: "Unknown capacity",
-  available: "Available",
-  fully_allocated: "Fully allocated",
-};
-
-const INVESTMENT_DEAL_STATUS_LABELS: Record<InvestmentDealStatus, string> = {
-  prospective: "Prospective",
-  active: "Active",
-  closed: "Closed",
-  passed: "Passed",
-};
-
-const ACCOUNTING_DOCUMENT_TYPE_LABELS: Record<AccountingDocumentType, string> = {
-  retainer: "Retainer",
-  commission: "Cash commission",
-  expense: "Expense",
-  adjustment: "Adjustment",
-};
-
-const ACCOUNTING_DOCUMENT_STATUS_LABELS: Record<AccountingDocumentStatus, string> = {
-  draft: "Draft",
-  open: "Open",
-  partially_paid: "Part paid",
-  paid: "Paid",
-  void: "Void",
-};
-
-const ACCOUNTING_LEDGER_ENTRY_TYPE_LABELS: Record<AccountingLedgerEntryType, string> = {
-  retainer_payment: "Retainer payment",
-  commission_payment: "Commission payment",
-  expense_payment: "Expense payment",
-  adjustment: "Adjustment",
-};
-
-const ACCOUNTING_DIRECTION_LABELS: Record<AccountingDirection, string> = {
-  incoming: "Incoming",
-  outgoing: "Outgoing",
-};
-
 const ENRICHMENT_KEYWORD_SEPARATOR = /[;,\n]+/;
 
-const VIEW_TITLES: Record<ActiveView, string> = {
-  companies: "Company golden source",
-  people: "People directory",
-  tags: "Tag manager",
-  pipeline: "Outreach pipeline",
-  clients: "Fundraising clients",
-  tasks: "Tasks and next steps",
-  import: "Import admin",
-  accounting: "Accounting and payments",
-};
-
 const COMPANY_PAGE_SIZE_OPTIONS = [50, 100, 250, 500, "all"] as const;
-const PEOPLE_PAGE_SIZE_OPTIONS = [50, 100, 250, 500, 1000, "all"] as const;
 const PUSH_BATCH_SIZE = 100;
 const DEBUG_DRAFT_VERSION = 1;
 const DEBUG_MODE_STORAGE_KEY = "golden-source-debug-mode";
@@ -449,26 +335,15 @@ const DEBUG_DRAFT_DB_NAME = "golden-source-debug";
 const DEBUG_DRAFT_STORE_NAME = "drafts";
 const DEBUG_DRAFT_RECORD_KEY = "current";
 type CompanyPageSize = (typeof COMPANY_PAGE_SIZE_OPTIONS)[number];
-type PeoplePageSize = (typeof PEOPLE_PAGE_SIZE_OPTIONS)[number];
 
 function uniqueValues(companies: Company[], selector: (company: Company) => string | null) {
   return [...new Set(companies.map(selector).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b, "en-US"));
-}
-
-function isUuid(value: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function formatDealStatusSummary(dealName: string, fromStatus: InvestmentDealStatus, toStatus: InvestmentDealStatus) {
   return fromStatus === toStatus
     ? `Investment deal "${dealName}" status update: ${INVESTMENT_DEAL_STATUS_LABELS[toStatus]}.`
     : `Investment deal "${dealName}" changed from ${INVESTMENT_DEAL_STATUS_LABELS[fromStatus]} to ${INVESTMENT_DEAL_STATUS_LABELS[toStatus]}.`;
-}
-
-function formatCompanyWebsites(company: Company) {
-  if (company.websiteDomains.length === 0) return company.country ?? "No domain";
-  if (company.websiteDomains.length === 1) return company.websiteDomains[0];
-  return `${company.websiteDomains[0]} +${company.websiteDomains.length - 1}`;
 }
 
 function emptyAccountingData(): AccountingData {
@@ -483,56 +358,6 @@ function withAccountingSummaries(data: AccountingData): AccountingData {
   return {
     ...data,
     summaries: buildAccountingSummaries(data.documents, data.ledgerEntries),
-  };
-}
-
-function defaultAccountingDocumentDraft(): AccountingDocumentDraft {
-  return {
-    documentId: null,
-    documentType: "retainer",
-    status: "open",
-    companyId: "",
-    title: "",
-    amount: "",
-    currency: "GBP",
-    issuedOn: todayIsoDate(),
-    dueOn: "",
-    externalReference: "",
-    documentUrl: "",
-    notes: "",
-  };
-}
-
-function defaultAccountingLedgerDraft(): AccountingLedgerDraft {
-  return {
-    entryId: null,
-    documentId: "",
-    entryType: "retainer_payment",
-    direction: "incoming",
-    companyId: "",
-    amount: "",
-    currency: "GBP",
-    occurredOn: todayIsoDate(),
-    externalReference: "",
-    documentUrl: "",
-    notes: "",
-  };
-}
-
-function accountingDocumentDraftFromDocument(document: AccountingDocument): AccountingDocumentDraft {
-  return {
-    documentId: document.id,
-    documentType: document.documentType,
-    status: document.status === "void" ? "open" : document.status,
-    companyId: document.companyId ?? "",
-    title: document.title,
-    amount: amountInputFromMinor(document.amountMinor),
-    currency: document.currency,
-    issuedOn: document.issuedOn ?? "",
-    dueOn: document.dueOn ?? "",
-    externalReference: document.externalReference ?? "",
-    documentUrl: document.documentUrl ?? "",
-    notes: document.notes ?? "",
   };
 }
 
@@ -795,12 +620,6 @@ function relationshipForCompany(company: Company) {
 
 function relationshipForPerson(person: Person) {
   return person.investmentRelationships.find((relationship) => relationshipMatches(relationship, null, person.id)) ?? defaultInvestmentRelationship({ companyId: null, personId: person.id });
-}
-
-function relationshipChipLabel(relationship: InvestmentRelationship) {
-  const labels = [INVESTMENT_STATUS_LABELS[relationship.investmentStatus], CAPACITY_STATUS_LABELS[relationship.capacityStatus]];
-  if (relationship.deals.length > 0) labels.push(`${relationship.deals.length} deal${relationship.deals.length === 1 ? "" : "s"}`);
-  return labels.join(" • ");
 }
 
 function enrichmentDraftForCompany(company: Company): EnrichmentDraft {
@@ -4001,303 +3820,33 @@ export function CrmShell({
             ) : null}
 
           {activeCompany && (showDetailPanel || companyModalId) ? (
-            <div
-              className={clsx("company-detail-host", !showDetailPanel && "modal-backdrop company-detail-backdrop")}
-              role={!showDetailPanel ? "presentation" : undefined}
-              onClick={!showDetailPanel ? closeCompanyModal : undefined}
-            >
-            <aside
-              className={clsx("detail-panel", !showDetailPanel && "company-detail-modal")}
-              aria-label="Company details"
-              role={!showDetailPanel ? "dialog" : undefined}
-              aria-modal={!showDetailPanel ? true : undefined}
-              onClick={!showDetailPanel ? (event) => event.stopPropagation() : undefined}
-            >
-              <div className="detail-header">
-                <div>
-                  <p className="eyebrow">Company detail</p>
-                  <input
-                    className="title-input"
-                    aria-label="Company name"
-                    value={activeCompanyDraft.name}
-                    onChange={(event) => setCompanyDraft({ ...activeCompanyDraft, name: event.target.value })}
-                    onBlur={() => updateActiveCompany("name", activeCompanyDraft.name)}
-                  />
-                </div>
-                <div className="detail-header-actions">
-                  <span className={clsx("quality-pill", activeCompany.sourceQuality)}>{SOURCE_QUALITY_LABELS[activeCompany.sourceQuality]}</span>
-                  {!showDetailPanel ? (
-                    <button type="button" className="icon-button" onClick={closeCompanyModal} title="Close company details">
-                      <X size={16} />
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-
-              <div className="detail-fields">
-                <label>
-                  Description
-                  <textarea
-                    value={activeCompanyDraft.description}
-                    onChange={(event) => setCompanyDraft({ ...activeCompanyDraft, description: event.target.value })}
-                    onBlur={() => updateActiveCompany("description", activeCompanyDraft.description)}
-                    rows={4}
-                  />
-                </label>
-                <label>
-                  Country
-                  <input
-                    value={activeCompanyDraft.country}
-                    onChange={(event) => setCompanyDraft({ ...activeCompanyDraft, country: event.target.value })}
-                    onBlur={() => updateActiveCompany("country", activeCompanyDraft.country)}
-                  />
-                </label>
-                <label>
-                  Websites
-                  <textarea
-                    value={activeCompanyDraft.websites}
-                    onChange={(event) => setCompanyDraft({ ...activeCompanyDraft, websites: event.target.value })}
-                    onBlur={() => updateActiveCompany("websites", activeCompanyDraft.websites)}
-                    rows={3}
-                  />
-                </label>
-                <label>
-                  Source
-                  <input readOnly value={`${Math.round((activeCompany.mergeConfidence ?? 0) * 100)}% merge confidence`} />
-                </label>
-              </div>
-
-              {activeCompanyEnrichmentDraft ? (
-                <section className="detail-section enrichment-section">
-                  <div className="section-heading">
-                    <h2>LLM enrichment</h2>
-                    <span>{activeCompany.enrichment?.status ?? "Pending"}</span>
-                  </div>
-                  {enrichmentMessage ? <div className="data-notice compact-notice"><Flag size={16} /><span>{enrichmentMessage}</span></div> : null}
-                  <div className="enrichment-actions">
-                    <button type="button" className="secondary-button" onClick={() => enrichActiveCompany(false)} disabled={isEnriching || !initialData.localEnrichmentEnabled || !isSignedIn}>
-                      <FlaskConical size={15} /> {isEnriching ? "Enriching..." : "Enrich"}
-                    </button>
-                    <button type="button" className="secondary-button" onClick={() => enrichActiveCompany(true)} disabled={isEnriching || !initialData.localEnrichmentEnabled || !isSignedIn}>
-                      Retry
-                    </button>
-                    <button type="button" className="text-button" onClick={saveActiveCompanyEnrichment}>
-                      <Check size={14} /> Queue review
-                    </button>
-                  </div>
-                  {!initialData.localEnrichmentEnabled || !isSignedIn ? (
-                    <p className="muted helper-copy">Local Ollama enrichment is available only for signed-in local/admin sessions.</p>
-                  ) : null}
-                  <div className="detail-fields compact-fields">
-                    <label>
-                      Industry
-                      <input value={activeCompanyEnrichmentDraft.industry} onChange={(event) => setEnrichmentDraft({ ...activeCompanyEnrichmentDraft, industry: event.target.value })} />
-                    </label>
-                    <label>
-                      Subsector
-                      <input value={activeCompanyEnrichmentDraft.subsector} onChange={(event) => setEnrichmentDraft({ ...activeCompanyEnrichmentDraft, subsector: event.target.value })} />
-                    </label>
-                    <label>
-                      Company type
-                      <input value={activeCompanyEnrichmentDraft.companyType} onChange={(event) => setEnrichmentDraft({ ...activeCompanyEnrichmentDraft, companyType: event.target.value })} />
-                    </label>
-                    <label>
-                      Location
-                      <input value={activeCompanyEnrichmentDraft.location} onChange={(event) => setEnrichmentDraft({ ...activeCompanyEnrichmentDraft, location: event.target.value })} />
-                    </label>
-                    <label className="wide-field">
-                      Summary
-                      <textarea value={activeCompanyEnrichmentDraft.summary} onChange={(event) => setEnrichmentDraft({ ...activeCompanyEnrichmentDraft, summary: event.target.value })} rows={3} />
-                    </label>
-                    <label className="wide-field">
-                      Keywords
-                      <input value={activeCompanyEnrichmentDraft.keywords} onChange={(event) => setEnrichmentDraft({ ...activeCompanyEnrichmentDraft, keywords: event.target.value })} placeholder="Biotech; diagnostics; therapeutics" />
-                    </label>
-                  </div>
-                </section>
-              ) : null}
-
-              {activeCompanyInvestment && activeCompanyInvestmentDraft ? (
-                <section className="detail-section investment-section">
-                  <div className="section-heading">
-                    <h2>Investment history</h2>
-                    <span>{relationshipChipLabel(activeCompanyInvestment)}</span>
-                  </div>
-                  <div className="investment-grid">
-                    <label className="select-filter">
-                      <span>Status</span>
-                      <select
-                        value={activeCompanyInvestmentDraft.investmentStatus}
-                        onChange={(event) => setCompanyInvestmentDraft({ ...activeCompanyInvestmentDraft, investmentStatus: event.target.value as InvestmentStatus })}
-                      >
-                        {INVESTMENT_STATUSES.map((statusValue) => (
-                          <option key={statusValue} value={statusValue}>
-                            {INVESTMENT_STATUS_LABELS[statusValue]}
-                          </option>
-                        ))}
-                      </select>
-                      <ChevronDown size={14} />
-                    </label>
-                    <label className="select-filter">
-                      <span>Capacity</span>
-                      <select
-                        value={activeCompanyInvestmentDraft.capacityStatus}
-                        onChange={(event) => setCompanyInvestmentDraft({ ...activeCompanyInvestmentDraft, capacityStatus: event.target.value as CapacityStatus })}
-                      >
-                        {CAPACITY_STATUSES.map((statusValue) => (
-                          <option key={statusValue} value={statusValue}>
-                            {CAPACITY_STATUS_LABELS[statusValue]}
-                          </option>
-                        ))}
-                      </select>
-                      <ChevronDown size={14} />
-                    </label>
-                    <label>
-                      Last invested
-                      <input type="date" value={activeCompanyInvestmentDraft.lastInvestedDate} onChange={(event) => setCompanyInvestmentDraft({ ...activeCompanyInvestmentDraft, lastInvestedDate: event.target.value })} />
-                    </label>
-                    <label className="wide-field">
-                      Notes
-                      <textarea value={activeCompanyInvestmentDraft.notes} onChange={(event) => setCompanyInvestmentDraft({ ...activeCompanyInvestmentDraft, notes: event.target.value })} rows={2} />
-                    </label>
-                  </div>
-                  <div className="investment-deals">
-                    {activeCompanyInvestment.deals.map((deal) => (
-                      <div key={deal.id} className="deal-row">
-                        <strong>{deal.name}</strong>
-                        <span>{INVESTMENT_DEAL_STATUS_LABELS[deal.status]}{deal.investedAt ? ` • ${deal.investedAt}` : ""}</span>
-                      </div>
-                    ))}
-                    {activeCompanyInvestment.deals.length === 0 ? <p className="empty-state compact">No deals linked yet.</p> : null}
-                  </div>
-                  <div className="investment-grid deal-editor-grid">
-                    <label>
-                      Deal name
-                      <input value={activeCompanyInvestmentDraft.dealName} onChange={(event) => setCompanyInvestmentDraft({ ...activeCompanyInvestmentDraft, dealName: event.target.value })} placeholder="Deal name" />
-                    </label>
-                    <label className="select-filter">
-                      <span>Deal status</span>
-                      <select value={activeCompanyInvestmentDraft.dealStatus} onChange={(event) => setCompanyInvestmentDraft({ ...activeCompanyInvestmentDraft, dealStatus: event.target.value as InvestmentDealStatus })}>
-                        {INVESTMENT_DEAL_STATUSES.map((statusValue) => (
-                          <option key={statusValue} value={statusValue}>
-                            {INVESTMENT_DEAL_STATUS_LABELS[statusValue]}
-                          </option>
-                        ))}
-                      </select>
-                      <ChevronDown size={14} />
-                    </label>
-                    <label>
-                      Deal date
-                      <input type="date" value={activeCompanyInvestmentDraft.dealDate} onChange={(event) => setCompanyInvestmentDraft({ ...activeCompanyInvestmentDraft, dealDate: event.target.value })} />
-                    </label>
-                    <label>
-                      Role
-                      <input value={activeCompanyInvestmentDraft.dealRole} onChange={(event) => setCompanyInvestmentDraft({ ...activeCompanyInvestmentDraft, dealRole: event.target.value })} />
-                    </label>
-                  </div>
-                  <div className="investment-actions">
-                    <button type="button" className="text-button" onClick={() => saveInvestmentRelationship(activeCompanyInvestment, activeCompanyInvestmentDraft, "Company investment update")}>
-                      <Check size={14} /> Queue status
-                    </button>
-                    <button type="button" className="text-button" onClick={() => addInvestmentDealLocally(activeCompanyInvestment, activeCompanyInvestmentDraft, "Company investment deal")} disabled={!activeCompanyInvestmentDraft.dealName.trim()}>
-                      <Plus size={14} /> Queue deal
-                    </button>
-                  </div>
-                </section>
-              ) : null}
-
-              <section className="detail-section" id="people">
-                <div className="section-heading">
-                  <h2>People</h2>
-                  <span>{activeCompany.people.filter((person) => person.highlighted).length} highlighted</span>
-                </div>
-              <div className="people-list">
-                  {activeCompany.people.map((person) => (
-                    <article key={person.id} className="person-row">
-                      <button
-                        type="button"
-                        className={clsx("icon-button", person.highlighted && "active")}
-                        onClick={() => toggleHighlight(activeCompany.id, person)}
-                        title={person.highlighted ? "Remove highlight" : "Highlight person"}
-                      >
-                        <Star size={16} fill={person.highlighted ? "currentColor" : "none"} />
-                      </button>
-                      <div>
-                        <strong>{person.displayName}</strong>
-                        <span>{person.jobTitle ?? person.email ?? "No title"}</span>
-                        {person.emails.length > 1 ? <span>{person.emails.length} emails</span> : null}
-                        {person.categories.length > 0 ? (
-                          <div className="contact-chip-list">
-                            {person.categories.slice(0, 3).map((category) => (
-                              <span key={category} className="contact-chip">
-                                {category}
-                              </span>
-                            ))}
-                            {person.categories.length > 3 ? <span className="email-more">+{person.categories.length - 3}</span> : null}
-                          </div>
-                        ) : null}
-                        {person.investmentRelationships.length > 0 ? (
-                          <div className="investment-chip-list">
-                            {person.investmentRelationships.slice(0, 2).map((relationship) => (
-                              <span key={relationship.id} className={clsx("investment-chip", relationship.capacityStatus === "fully_allocated" && "allocated")}>
-                                {relationshipChipLabel(relationship)}
-                              </span>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                      <div className="person-actions">
-                        <button type="button" className="icon-button" onClick={() => startPersonEdit(person)} title="Edit contact">
-                          <Pencil size={16} />
-                        </button>
-                        <a className="icon-link" href={person.email ? `mailto:${person.email}` : "#"} title="Email contact">
-                          <Mail size={16} />
-                        </a>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              </section>
-
-              <section className="detail-section">
-                <div className="section-heading">
-                  <h2>Tags</h2>
-                  <span>{activeCompany.tags.length}</span>
-                </div>
-                <div className="tag-list large">
-                  {activeCompany.tags.map((item) => (
-                    <span key={item.id} className="tag-chip" style={{ "--tag-color": item.color } as React.CSSProperties}>
-                      {item.name}
-                    </span>
-                  ))}
-                </div>
-              </section>
-
-              <section className="detail-section">
-                <div className="section-heading">
-                  <h2>Activity</h2>
-                  <span>Manual tracking</span>
-                </div>
-                <div className="note-composer">
-                  <input value={noteText} onChange={(event) => setNoteText(event.target.value)} placeholder="Add note, call, email, or meeting summary" />
-                  <button type="button" onClick={addManualNote}>
-                    <Check size={15} /> Add
-                  </button>
-                </div>
-                <div className="activity-list">
-                  {activeCompany.activities.map((item) => (
-                    <div key={item.id} className="activity-item">
-                      <Activity size={15} />
-                      <div>
-                        <strong>{item.summary}</strong>
-                        <span>{formatDate(item.occurredAt)}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            </aside>
-            </div>
+          <CompanyDetailPanel
+            activeCompany={activeCompany}
+            showDetailPanel={showDetailPanel}
+            companyModalId={companyModalId}
+            activeCompanyDraft={activeCompanyDraft}
+            setCompanyDraft={setCompanyDraft}
+            updateActiveCompany={updateActiveCompany}
+            closeCompanyModal={closeCompanyModal}
+            activeCompanyEnrichmentDraft={activeCompanyEnrichmentDraft}
+            setEnrichmentDraft={setEnrichmentDraft}
+            enrichmentMessage={enrichmentMessage}
+            isEnriching={isEnriching}
+            localEnrichmentEnabled={initialData.localEnrichmentEnabled}
+            isSignedIn={isSignedIn}
+            enrichActiveCompany={enrichActiveCompany}
+            saveActiveCompanyEnrichment={saveActiveCompanyEnrichment}
+            activeCompanyInvestment={activeCompanyInvestment}
+            activeCompanyInvestmentDraft={activeCompanyInvestmentDraft}
+            setCompanyInvestmentDraft={setCompanyInvestmentDraft}
+            saveInvestmentRelationship={saveInvestmentRelationship}
+            addInvestmentDealLocally={addInvestmentDealLocally}
+            toggleHighlight={toggleHighlight}
+            startPersonEdit={startPersonEdit}
+            noteText={noteText}
+            setNoteText={setNoteText}
+            addManualNote={addManualNote}
+          />
           ) : null}
           </section>
         ) : null}

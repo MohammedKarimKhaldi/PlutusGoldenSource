@@ -6,22 +6,12 @@ import {
   type InvestmentDealStatus,
 } from "@/lib/types";
 
-const INVESTMENT_DEAL_STATUS_LABELS: Record<InvestmentDealStatus, string> = {
-  prospective: "Prospective",
-  active: "Active",
-  closed: "Closed",
-  passed: "Passed",
-};
 import type { DealPipelineRow, DealPipelineGroup } from "@/lib/deal-pipeline";
-
-type PipelineStatusDraft = {
-  status: InvestmentDealStatus;
-  note: string;
-};
-
-function isUuid(value: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
+import {
+  INVESTMENT_DEAL_STATUS_LABELS,
+} from "@/components/shared";
+import type { PipelineStatusDraft } from "@/components/shared";
+import { isUuid } from "@/components/shared";
 
 export function PipelineView({
   groups,

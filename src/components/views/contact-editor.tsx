@@ -8,44 +8,13 @@ import {
   type InvestmentDealStatus,
 } from "@/lib/types";
 import type { InvestmentRelationship, Person } from "@/lib/types";
-
-type InvestmentDraft = {
-  targetKey: string;
-  investmentStatus: InvestmentStatus;
-  capacityStatus: CapacityStatus;
-  notes: string;
-  lastInvestedDate: string;
-  dealName: string;
-  dealStatus: InvestmentDealStatus;
-  dealDate: string;
-  dealRole: string;
-  dealNotes: string;
-};
-
-const INVESTMENT_STATUS_LABELS: Record<InvestmentStatus, string> = {
-  prospect: "Prospect",
-  past_investor: "Past investor",
-  current_investor: "Current investor",
-};
-
-const CAPACITY_STATUS_LABELS: Record<CapacityStatus, string> = {
-  unknown: "Unknown capacity",
-  available: "Available",
-  fully_allocated: "Fully allocated",
-};
-
-const INVESTMENT_DEAL_STATUS_LABELS: Record<InvestmentDealStatus, string> = {
-  prospective: "Prospective",
-  active: "Active",
-  closed: "Closed",
-  passed: "Passed",
-};
-
-function relationshipChipLabel(relationship: InvestmentRelationship) {
-  const labels = [INVESTMENT_STATUS_LABELS[relationship.investmentStatus], CAPACITY_STATUS_LABELS[relationship.capacityStatus]];
-  if (relationship.deals.length > 0) labels.push(`${relationship.deals.length} deal${relationship.deals.length === 1 ? "" : "s"}`);
-  return labels.join(" • ");
-}
+import {
+  INVESTMENT_STATUS_LABELS,
+  CAPACITY_STATUS_LABELS,
+  INVESTMENT_DEAL_STATUS_LABELS,
+  relationshipChipLabel,
+} from "@/components/shared";
+import type { InvestmentDraft } from "@/components/shared";
 
 export function ContactEditor({
   editingPerson,

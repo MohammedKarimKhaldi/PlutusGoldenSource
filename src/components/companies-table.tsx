@@ -18,13 +18,7 @@ import clsx from "clsx";
 
 import type { Company } from "@/lib/types";
 import { OUTREACH_STAGES } from "@/lib/types";
-
-// Local format functions
-function formatCompanyWebsites(company: { websiteDomains: string[]; country: string | null }): string {
-  if (company.websiteDomains.length === 0) return company.country ?? "No domain";
-  if (company.websiteDomains.length === 1) return company.websiteDomains[0];
-  return `${company.websiteDomains[0]} +${company.websiteDomains.length - 1}`;
-}
+import { formatCompanyWebsites, SOURCE_QUALITY_LABELS } from "@/components/shared";
 
 function formatDate(value: string | null): string {
   if (!value) return "No activity";
@@ -41,13 +35,6 @@ const numberSortingFn: SortingFn<Company> = (rowA, rowB, columnId) => {
   const a = rowA.getValue(columnId) as number ?? 0;
   const b = rowB.getValue(columnId) as number ?? 0;
   return a - b;
-};
-
-const SOURCE_QUALITY_LABELS: Record<string, string> = {
-  high: "High",
-  medium: "Medium",
-  low: "Low",
-  review: "Review",
 };
 
 type CompaniesTableProps = {
