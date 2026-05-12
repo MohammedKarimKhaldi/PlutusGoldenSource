@@ -34,6 +34,7 @@ export type {
   AccountingLedgerDraft,
   PipelineStatusDraft,
   EnrichmentDraft,
+  EnrichmentBatchProgress,
   TagSummary,
   PeopleDirectoryRow,
   PeoplePageSize,

@@ -73,6 +73,16 @@ export type EnrichmentDraft = {
   keywords: string;
 };
 
+export type EnrichmentBatchProgress = {
+  total: number;
+  completed: number;
+  skipped: number;
+  failed: number;
+  currentName: string | null;
+  stopRequested: boolean;
+  stopped: boolean;
+};
+
 export type PeopleDirectoryRow = {
   person: Person;
   company: Company;
