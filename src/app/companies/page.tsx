@@ -1,5 +1,5 @@
 import { CrmShell } from "@/components/crm-shell";
-import type { ActiveView } from "@/components/crm-shell";
+import type { ActiveView } from "@/lib/crm-types";
 import { getDashboardData } from "@/lib/data";
 
 const ACTIVE_VIEWS: ActiveView[] = ["companies", "people", "tags", "pipeline", "clients", "tasks", "import", "accounting"];

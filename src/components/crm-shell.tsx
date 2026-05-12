@@ -1,75 +1,39 @@
 "use client";
 
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Activity,
-  ArrowDown,
-  ArrowUp,
-  Building2,
-  Check,
-  CircleDot,
-  CreditCard,
-  FileSpreadsheet,
-  Flag,
-  Handshake,
-  ListChecks,
-  Mail,
-  Pencil,
-  Star,
-  Upload,
-  UsersRound,
+  Activity, ArrowDown, ArrowUp, Building2, Check, CircleDot, CreditCard,
+  FileSpreadsheet, Flag, Handshake, ListChecks, Mail, Pencil, Star, Upload, UsersRound,
 } from "lucide-react";
 import clsx from "clsx";
 
 import {
-  Metric,
-  FilterSelect,
-  NavButton,
-  formatNumber,
-  formatMinorMoney,
-  amountInputFromMinor,
-  parseMoneyInput,
-  todayIsoDate,
-  formatChangeCount,
-  normalizeSearchValue,
-  searchTokens,
-  searchTextMatches,
-  INVESTMENT_STATUS_LABELS,
-  CAPACITY_STATUS_LABELS,
-  INVESTMENT_DEAL_STATUS_LABELS,
-  ACCOUNTING_DOCUMENT_TYPE_LABELS,
-  ACCOUNTING_DOCUMENT_STATUS_LABELS,
-  ACCOUNTING_LEDGER_ENTRY_TYPE_LABELS,
-  ACCOUNTING_DIRECTION_LABELS,
-  isUuid,
-  PEOPLE_PAGE_SIZE_OPTIONS,
-  relationshipChipLabel,
+  Metric, FilterSelect, NavButton,
+  formatNumber, formatMinorMoney, amountInputFromMinor, parseMoneyInput, todayIsoDate,
+  formatChangeCount, normalizeSearchValue, searchTokens,
+  INVESTMENT_STATUS_LABELS, CAPACITY_STATUS_LABELS, INVESTMENT_DEAL_STATUS_LABELS,
+  ACCOUNTING_DOCUMENT_TYPE_LABELS, ACCOUNTING_DOCUMENT_STATUS_LABELS,
+  ACCOUNTING_LEDGER_ENTRY_TYPE_LABELS, ACCOUNTING_DIRECTION_LABELS,
+  isUuid, PEOPLE_PAGE_SIZE_OPTIONS, relationshipChipLabel,
 } from "@/components/shared";
 
 import {
-  addActivityAction,
-  addCompanyTagAction,
-  addInvestmentDealAction,
-  deleteAccountingRecordAction,
-  saveAccountingDocumentAction,
-  saveAccountingLedgerEntryAction,
-  highlightPersonAction,
-  mergeCompaniesAction,
-  mergePeopleAction,
-  moveStageAction,
-  renameCompanyTagAction,
-  refreshDashboardAction,
-  updateCompanyAction,
-  updateCompanyEnrichmentAction,
-  updateInvestmentDealStatusAction,
-  updateInvestmentRelationshipAction,
-  updatePeopleAction,
-  updatePersonAction,
-  voidAccountingRecordAction,
+  addActivityAction, addCompanyTagAction, addInvestmentDealAction,
+  deleteAccountingRecordAction, highlightPersonAction,
+  mergeCompaniesAction, mergePeopleAction, moveStageAction,
+  refreshDashboardAction, renameCompanyTagAction,
+  saveAccountingDocumentAction, saveAccountingLedgerEntryAction,
+  updateCompanyAction, updateCompanyEnrichmentAction,
+  updateInvestmentDealStatusAction, updateInvestmentRelationshipAction,
+  updatePersonAction, voidAccountingRecordAction,
 } from "@/app/actions";
 import { buildAccountingSummaries } from "@/lib/accounting";
 import { normalizeCompanyWebsites } from "@/lib/company-websites";
+import { normalizePersonCategories, normalizePersonEmails } from "@/lib/person-update";
+import { DEFAULT_COMPANY_TAG_COLOR } from "@/lib/enrichment/company-tags";
+import { buildDealPipelineRows, groupDealPipelineRows } from "@/lib/deal-pipeline";
+import { contactExportValues, filterContactExportRows, type ContactExportCriterion } from "@/lib/export/contacts";
 import { FundraisingView } from "@/components/fundraising-view";
 import { Sidebar } from "@/components/views/shell/sidebar";
 import { CrmTopbar } from "@/components/views/shell/crm-topbar";
@@ -87,857 +51,42 @@ import { AccountingView, defaultAccountingDocumentDraft, defaultAccountingLedger
 import { AccountingVoidDialog } from "@/components/views/accounting/accounting-void-dialog";
 import { CompaniesView } from "@/components/views/companies/companies-view";
 import { ContactEditor, usePersonEditor } from "@/components/views/people/contact-editor";
-import { buildDealPipelineRows, groupDealPipelineRows, type DealPipelineRow } from "@/lib/deal-pipeline";
-import { DEFAULT_COMPANY_TAG_COLOR } from "@/lib/enrichment/company-tags";
-import {
-  contactExportValues,
-  filterContactExportRows,
-  type ContactExportCriterion,
-} from "@/lib/export/contacts";
-import { normalizePersonCategories, normalizePersonEmails } from "@/lib/person-update";
+import { usePendingChanges } from "@/components/views/shell/use-pending-changes";
+import { useCrmDebug } from "@/components/views/shell/use-crm-debug";
 import type {
-  AccountingData,
-  AccountingDirection,
-  AccountingDocument,
-  AccountingDocumentStatus,
-  AccountingDocumentType,
-  AccountingLedgerEntry,
-  AccountingLedgerEntryType,
-  CapacityStatus,
-  Company,
-  CompanyEnrichment,
-  DashboardData,
-  InvestmentDealStatus,
-  InvestmentRelationship,
-  InvestmentStatus,
-  OutreachStage,
-  Person,
-  Tag,
+  AccountingData, AccountingDocument, AccountingLedgerEntry,
+  Company, CompanyEnrichment, DashboardData,
+  InvestmentDealStatus, InvestmentRelationship, OutreachStage, Person, Tag,
 } from "@/lib/types";
-import type {
-  InvestmentDraft,
-  AccountingDocumentDraft,
-  AccountingLedgerDraft,
-  PipelineStatusDraft,
-  EnrichmentDraft,
-  EnrichmentBatchProgress,
-  TagSummary,
-  PeopleDirectoryRow,
-  PeoplePageSize,
-} from "@/components/shared";
 import {
-  ACCOUNTING_DIRECTIONS,
-  ACCOUNTING_DOCUMENT_STATUSES,
-  ACCOUNTING_DOCUMENT_TYPES,
-  ACCOUNTING_LEDGER_ENTRY_TYPES,
-  CAPACITY_STATUSES,
-  INVESTMENT_DEAL_STATUSES,
-  INVESTMENT_STATUSES,
   OUTREACH_STAGES,
 } from "@/lib/types";
-
-type CrmShellProps = {
-  initialData: DashboardData;
-  authSuccess?: boolean;
-  companyId?: string;
-  hideDetailPanel?: boolean;
-  hideTable?: boolean;
-  activeView?: ActiveView;
-};
-
-export type ActiveView = "companies" | "people" | "tags" | "pipeline" | "clients" | "tasks" | "import" | "accounting";
-type ActionResult = {
-  ok: boolean;
-  message: string;
-};
-type PendingPersonUpdate = {
-  organizationId: string;
-  personId: string;
-  displayName: string;
-  firstName?: string | null;
-  lastName?: string | null;
-  emails?: string[];
-  jobTitle?: string | null;
-  linkedinUrl?: string | null;
-  phone?: string | null;
-  country?: string | null;
-  categories: string[];
-  syncEmails?: boolean;
-};
-type PendingChangeRecord =
-  | {
-      kind: "person";
-      key: string;
-      label: string;
-      personUpdate: PendingPersonUpdate;
-    }
-  | {
-      kind: "stage";
-      key: string;
-      label: string;
-      organizationId: string | null;
-      companyIds: string[];
-      stage: OutreachStage;
-    }
-  | {
-      kind: "company-tag";
-      key: string;
-      label: string;
-      organizationId: string | null;
-      companyIds: string[];
-      tagName: string;
-      color: string;
-    }
-  | {
-      kind: "highlight";
-      key: string;
-      label: string;
-      companyId: string;
-      personId: string;
-      highlighted: boolean;
-    }
-  | {
-      kind: "company-update";
-      key: string;
-      label: string;
-      payload: Record<string, unknown>;
-    }
-  | {
-      kind: "company-enrichment-update";
-      key: string;
-      label: string;
-      payload: Record<string, unknown>;
-    }
-  | {
-      kind: "investment-relationship";
-      key: string;
-      label: string;
-      payload: Record<string, unknown>;
-    }
-  | {
-      kind: "investment-deal";
-      key: string;
-      label: string;
-      payload: Record<string, unknown>;
-      localDeal: {
-        companyId: string | null;
-        personId: string | null;
-        relationshipId: string;
-        dealId: string;
-        dealName: string;
-        dealStatus: InvestmentDealStatus;
-        investedAt: string | null;
-        role: string | null;
-        notes: string | null;
-      };
-    }
-  | {
-      kind: "investment-deal-status";
-      key: string;
-      label: string;
-      payload: Record<string, unknown>;
-    }
-  | {
-      kind: "company-tag-rename";
-      key: string;
-      label: string;
-      organizationId: string | null;
-      tagId: string;
-      name: string;
-    }
-  | {
-      kind: "activity-note";
-      key: string;
-      label: string;
-      organizationId: string | null;
-      companyId: string;
-      summary: string;
-    }
-  | {
-      kind: "company-merge";
-      key: string;
-      label: string;
-      organizationId: string | null;
-      targetCompanyId: string;
-      sourceCompanyIds: string[];
-    }
-  | {
-      kind: "people-merge";
-      key: string;
-      label: string;
-      organizationId: string | null;
-      targetPersonId: string;
-      sourcePersonId: string;
-    };
-type PendingChange = {
-  key: string;
-  label: string;
-  run: () => Promise<ActionResult>;
-  runBeforePersonBatch?: boolean;
-  record: PendingChangeRecord;
-  type?: "person";
-  personUpdate?: PendingPersonUpdate;
-};
-type DebugDraft = {
-  version: number;
-  companies: Company[];
-  pendingChanges: PendingChangeRecord[];
-  syncMessage: string | null;
-};
-type EnrichmentApiResponse = {
-  enrichment?: CompanyEnrichment;
-  skipped?: boolean;
-  status?: string;
-  error?: string;
-  tagNames?: string[];
-  tags?: Tag[];
-};
-type AccountingTab = "documents" | "ledger";
-type AccountingRecordActionTarget = {
-  action: "void" | "delete";
-  entityType: "document" | "ledger_entry";
-  id: string;
-  title: string;
-};
-
-
-
-const INCORRECT_EMAIL_TAG = "Incorrect email";
-const EMAIL_IN_TEXT_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
-
-const ENRICHMENT_KEYWORD_SEPARATOR = /[;,\n]+/;
-
-const COMPANY_PAGE_SIZE_OPTIONS = [50, 100, 250, 500, "all"] as const;
-const PUSH_BATCH_SIZE = 100;
-const DEBUG_DRAFT_VERSION = 1;
-const DEBUG_MODE_STORAGE_KEY = "golden-source-debug-mode";
-const DEBUG_DRAFT_STORAGE_KEY = "golden-source-debug-draft";
-const DEBUG_DRAFT_DB_NAME = "golden-source-debug";
-const DEBUG_DRAFT_STORE_NAME = "drafts";
-const DEBUG_DRAFT_RECORD_KEY = "current";
-type CompanyPageSize = (typeof COMPANY_PAGE_SIZE_OPTIONS)[number];
-
-function uniqueValues(companies: Company[], selector: (company: Company) => string | null) {
-  return [...new Set(companies.map(selector).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b, "en-US"));
-}
-
-function formatDealStatusSummary(dealName: string, fromStatus: InvestmentDealStatus, toStatus: InvestmentDealStatus) {
-  return fromStatus === toStatus
-    ? `Investment deal "${dealName}" status update: ${INVESTMENT_DEAL_STATUS_LABELS[toStatus]}.`
-    : `Investment deal "${dealName}" changed from ${INVESTMENT_DEAL_STATUS_LABELS[fromStatus]} to ${INVESTMENT_DEAL_STATUS_LABELS[toStatus]}.`;
-}
-
-function emptyAccountingData(): AccountingData {
-  return {
-    documents: [],
-    ledgerEntries: [],
-    summaries: [],
-  };
-}
-
-function withAccountingSummaries(data: AccountingData): AccountingData {
-  return {
-    ...data,
-    summaries: buildAccountingSummaries(data.documents, data.ledgerEntries),
-  };
-}
-
-function accountingLedgerDraftFromEntry(entry: AccountingLedgerEntry): AccountingLedgerDraft {
-  return {
-    entryId: entry.id,
-    documentId: entry.documentId ?? "",
-    entryType: entry.entryType,
-    direction: entry.direction,
-    companyId: entry.companyId ?? "",
-    amount: amountInputFromMinor(entry.amountMinor),
-    currency: entry.currency,
-    occurredOn: entry.occurredOn,
-    externalReference: entry.externalReference ?? "",
-    documentUrl: entry.documentUrl ?? "",
-    notes: entry.notes ?? "",
-  };
-}
-
-function accountingSearchParts(values: Array<string | null | undefined>) {
-  return values.filter(Boolean).join(" ").toLowerCase();
-}
-
-function isPendingPersonChange(change: PendingChange): change is PendingChange & { type: "person"; personUpdate: PendingPersonUpdate } {
-  return change.type === "person" && Boolean(change.personUpdate);
-}
-
-function mergePendingPersonUpdate(existing: PendingPersonUpdate, next: PendingPersonUpdate): PendingPersonUpdate {
-  const syncEmails = existing.syncEmails !== false || next.syncEmails !== false;
-
-  return {
-    organizationId: next.organizationId,
-    personId: next.personId,
-    displayName: next.displayName,
-    firstName: "firstName" in next ? next.firstName : existing.firstName,
-    lastName: "lastName" in next ? next.lastName : existing.lastName,
-    jobTitle: "jobTitle" in next ? next.jobTitle : existing.jobTitle,
-    linkedinUrl: "linkedinUrl" in next ? next.linkedinUrl : existing.linkedinUrl,
-    phone: "phone" in next ? next.phone : existing.phone,
-    country: "country" in next ? next.country : existing.country,
-    categories: next.categories,
-    syncEmails,
-    ...(syncEmails ? { emails: next.syncEmails !== false ? next.emails ?? [] : existing.emails ?? [] } : {}),
-  };
-}
-
-function emailDomain(email: string) {
-  return email.split("@").pop()?.toLowerCase() ?? "";
-}
-
-function extractEmailsFromText(value: string) {
-  return normalizePersonEmails(value.match(EMAIL_IN_TEXT_PATTERN) ?? []);
-}
-
-function buildCompanySearchText(company: Company) {
-  return normalizeSearchValue([
-    company.name,
-    company.normalizedName,
-    company.websiteDomain,
-    company.websiteDomains.join(" "),
-    company.description,
-    company.country,
-    company.status,
-    company.sourceQuality,
-    company.outreachStage,
-    company.categories.join(" "),
-    company.tags.map((item) => item.name).join(" "),
-    company.nextTask?.title,
-    company.activities.map((activity) => `${activity.type} ${activity.summary}`).join(" "),
-    company.enrichment ? [company.enrichment.industry, company.enrichment.subsector, company.enrichment.companyType, company.enrichment.keywords.join(" "), company.enrichment.summary, company.enrichment.location].join(" ") : "",
-    company.investmentRelationships.map((relationship) => `${relationship.investmentStatus} ${relationship.capacityStatus} ${relationship.notes ?? ""} ${relationship.deals.map((deal) => `${deal.name} ${deal.role ?? ""} ${deal.notes ?? ""}`).join(" ")}`).join(" "),
-    company.people.map((person) => `${person.displayName} ${person.firstName ?? ""} ${person.lastName ?? ""} ${person.emails.join(" ")} ${person.email ?? ""} ${person.jobTitle ?? ""} ${person.country ?? ""} ${person.categories.join(" ")} ${person.connectionStrength ?? ""}`).join(" "),
-  ]
-    .filter(Boolean)
-    .join(" "));
-}
-
-function companyMatches(
-  company: Company,
-  text: string,
-  query: string,
-  stageFilters: Set<string>,
-  countryFilters: Set<string>,
-  tagFilters: Set<string>,
-  qualityFilters: Set<string>,
-) {
-  return (
-    searchTextMatches(text, query) &&
-    (stageFilters.size === 0 || stageFilters.has(company.outreachStage)) &&
-    (countryFilters.size === 0 || (company.country ? countryFilters.has(company.country) : false)) &&
-    (tagFilters.size === 0 || company.tags.some((item) => tagFilters.has(item.name))) &&
-    (qualityFilters.size === 0 || qualityFilters.has(company.sourceQuality))
-  );
-}
-
-function personMatches({
-  person,
-  companies,
-  query,
-  companyFilter,
-  domainFilter,
-  stageFilter,
-  highlightFilter,
-}: {
-  person: Person;
-  companies: Company[];
-  query: string;
-  companyFilter: string;
-  domainFilter: string;
-  stageFilter: string;
-  highlightFilter: string;
-}) {
-  const companyText = companies.map((company) => `${company.name} ${company.websiteDomains.join(" ")} ${company.outreachStage}`).join(" ");
-  const text = normalizeSearchValue([
-    person.displayName,
-    person.firstName,
-    person.lastName,
-    person.jobTitle,
-    person.country,
-    person.connectionStrength,
-    person.categories.join(" "),
-    person.investmentRelationships.map((relationship) => `${relationship.investmentStatus} ${relationship.capacityStatus} ${relationship.deals.map((deal) => deal.name).join(" ")}`).join(" "),
-    person.emails.join(" "),
-    companyText,
-  ]
-    .filter(Boolean)
-    .join(" "));
-
-  return (
-    searchTextMatches(text, query) &&
-    (!companyFilter || companies.some((company) => company.name === companyFilter)) &&
-    (!domainFilter || person.emails.some((email) => emailDomain(email) === domainFilter)) &&
-    (!stageFilter || companies.some((company) => company.outreachStage === stageFilter)) &&
-    (!highlightFilter || (highlightFilter === "Highlighted" ? person.highlighted : !person.highlighted))
-  );
-}
-
-function csvEscape(value: unknown) {
-  const text = String(value ?? "");
-  if (!/[",\n]/.test(text)) return text;
-  return `"${text.replace(/"/g, '""')}"`;
-}
-
-function exportCompanies(companies: Company[]) {
-  const header = ["Company", "Websites", "Country", "Stage", "Tags", "Highlighted people", "Next task"];
-  const rows = companies.map((company) => [
-    company.name,
-    company.websiteDomains.join("; "),
-    company.country ?? "",
-    company.outreachStage,
-    company.tags.map((tag) => tag.name).join("; "),
-    company.people.filter((person) => person.highlighted).map((person) => person.displayName).join("; "),
-    company.nextTask?.title ?? "",
-  ]);
-  const csv = [header, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "golden-source-companies.csv";
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
-function exportDealPipeline(rows: DealPipelineRow[]) {
-  const header = ["Company", "Deal", "Deal status", "Company outreach stage", "Linked contacts", "Role", "Date", "Deal notes", "Relationship notes"];
-  const csvRows = rows.map((row) => [
-    row.companyName,
-    row.dealName,
-    INVESTMENT_DEAL_STATUS_LABELS[row.status],
-    row.outreachStage,
-    row.contacts.join("; "),
-    row.roles.join("; "),
-    row.investedAt ?? "",
-    row.dealNotes.join("; "),
-    row.relationshipNotes.join("; "),
-  ]);
-  const csv = [header, ...csvRows].map((row) => row.map(csvEscape).join(",")).join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "golden-source-deal-pipeline.csv";
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
-function exportPeople(rows: PeopleDirectoryRow[]) {
-  const header = ["Person", "Companies", "Job title", "Stages", "Emails", "Contact tags", "Highlighted"];
-  const csvRows = rows.map(({ person, companies }) => [
-    person.displayName,
-    companies.map((company) => company.name).join("; "),
-    person.jobTitle ?? "",
-    [...new Set(companies.map((company) => company.outreachStage))].join("; "),
-    person.emails.join("; "),
-    person.categories.join("; "),
-    person.highlighted ? "Yes" : "No",
-  ]);
-  const csv = [header, ...csvRows].map((row) => row.map(csvEscape).join(",")).join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "golden-source-people.csv";
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
-function normalizeEnrichmentKeywords(value: string) {
-  return [...new Set(value.split(ENRICHMENT_KEYWORD_SEPARATOR).map((item) => item.trim()).filter(Boolean))].slice(0, 30);
-}
-
-function defaultCompanyEnrichment(company: Company): CompanyEnrichment {
-  const now = new Date().toISOString();
-  return {
-    companyId: company.id,
-    status: "needs_review",
-    summary: null,
-    industry: null,
-    subsector: null,
-    companyType: null,
-    location: company.country,
-    keywords: [],
-    sourceUrl: company.websiteDomains[0] ? `https://${company.websiteDomains[0]}` : null,
-    model: null,
-    confidence: null,
-    errorMessage: null,
-    generatedAt: null,
-    reviewedAt: null,
-    updatedAt: now,
-  };
-}
-
-function relationshipMatches(relationship: InvestmentRelationship, companyId: string | null, personId: string | null) {
-  return relationship.companyId === companyId && relationship.personId === personId;
-}
-
-function defaultInvestmentRelationship({
-  companyId,
-  personId,
-}: {
-  companyId: string | null;
-  personId: string | null;
-}): InvestmentRelationship {
-  return {
-    id: `local-investment-${companyId ?? "none"}-${personId ?? "none"}`,
-    companyId,
-    personId,
-    investmentStatus: "prospect",
-    capacityStatus: "unknown",
-    notes: null,
-    lastInvestedDate: null,
-    deals: [],
-  };
-}
-
-function relationshipForCompany(company: Company) {
-  return company.investmentRelationships.find((relationship) => relationshipMatches(relationship, company.id, null)) ?? defaultInvestmentRelationship({ companyId: company.id, personId: null });
-}
-
-function enrichmentDraftForCompany(company: Company): EnrichmentDraft {
-  const enrichment = company.enrichment ?? defaultCompanyEnrichment(company);
-  return {
-    companyId: company.id,
-    summary: enrichment.summary ?? "",
-    industry: enrichment.industry ?? "",
-    subsector: enrichment.subsector ?? "",
-    companyType: enrichment.companyType ?? "",
-    location: enrichment.location ?? "",
-    keywords: enrichment.keywords.join("; "),
-  };
-}
-
-function investmentDraftForRelationship(relationship: InvestmentRelationship): InvestmentDraft {
-  return {
-    targetKey: `${relationship.companyId ?? "none"}:${relationship.personId ?? "none"}`,
-    investmentStatus: relationship.investmentStatus,
-    capacityStatus: relationship.capacityStatus,
-    notes: relationship.notes ?? "",
-    lastInvestedDate: relationship.lastInvestedDate ?? "",
-    dealName: "",
-    dealStatus: "closed",
-    dealDate: relationship.lastInvestedDate ?? "",
-    dealRole: "Investor",
-    dealNotes: "",
-  };
-}
-
-function uniqueList(values: string[]) {
-  return [...new Set(values.filter(Boolean))];
-}
-
-function chunkItems<T>(items: T[], size: number) {
-  const groups: T[][] = [];
-  for (let index = 0; index < items.length; index += size) {
-    groups.push(items.slice(index, index + size));
-  }
-  return groups;
-}
-
-function personSourceIds(person: Person) {
-  return uniqueList(Array.isArray(person.sourcePersonIds) && person.sourcePersonIds.length > 0 ? person.sourcePersonIds : [person.id]);
-}
-
-function isPendingChangeRecord(value: unknown): value is PendingChangeRecord {
-  if (!value || typeof value !== "object") return false;
-  return typeof (value as { kind?: string }).kind === "string";
-}
-
-function openDebugDraftDatabase() {
-  return new Promise<IDBDatabase>((resolve, reject) => {
-    if (typeof window === "undefined" || !("indexedDB" in window)) {
-      reject(new Error("IndexedDB is not available."));
-      return;
-    }
-
-    const request = window.indexedDB.open(DEBUG_DRAFT_DB_NAME, 1);
-    request.onupgradeneeded = () => {
-      const database = request.result;
-      if (!database.objectStoreNames.contains(DEBUG_DRAFT_STORE_NAME)) {
-        database.createObjectStore(DEBUG_DRAFT_STORE_NAME);
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("Failed to open IndexedDB."));
-  });
-}
-
-async function readDebugDraftFromStorage() {
-  if (typeof window === "undefined") return null;
-  const fallbackStorage = window.localStorage;
-
-  if ("indexedDB" in window) {
-    try {
-      const database = await openDebugDraftDatabase();
-      const result = await new Promise<DebugDraft | null>((resolve, reject) => {
-        const transaction = database.transaction(DEBUG_DRAFT_STORE_NAME, "readonly");
-        const store = transaction.objectStore(DEBUG_DRAFT_STORE_NAME);
-        const request = store.get(DEBUG_DRAFT_RECORD_KEY);
-        request.onsuccess = () => resolve((request.result as DebugDraft | undefined) ?? null);
-        request.onerror = () => reject(request.error ?? new Error("Failed to read debug draft."));
-        transaction.oncomplete = () => database.close();
-        transaction.onerror = () => reject(transaction.error ?? new Error("Failed to read debug draft."));
-      });
-
-      if (result) return result;
-    } catch {
-      // Fall back to localStorage migration path below.
-    }
-  }
-
-  const rawDraft = fallbackStorage.getItem(DEBUG_DRAFT_STORAGE_KEY);
-  if (!rawDraft) return null;
-
-  try {
-    const parsed = JSON.parse(rawDraft) as DebugDraft;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-async function writeDebugDraftToStorage(draft: DebugDraft) {
-  if (typeof window === "undefined") return;
-  const fallbackStorage = window.localStorage;
-
-  if ("indexedDB" in window) {
-    const database = await openDebugDraftDatabase();
-    await new Promise<void>((resolve, reject) => {
-      const transaction = database.transaction(DEBUG_DRAFT_STORE_NAME, "readwrite");
-      const store = transaction.objectStore(DEBUG_DRAFT_STORE_NAME);
-      store.put(draft, DEBUG_DRAFT_RECORD_KEY);
-      transaction.oncomplete = () => {
-        database.close();
-        resolve();
-      };
-      transaction.onerror = () => reject(transaction.error ?? new Error("Failed to save debug draft."));
-    });
-    fallbackStorage.removeItem(DEBUG_DRAFT_STORAGE_KEY);
-    return;
-  }
-
-  fallbackStorage.setItem(DEBUG_DRAFT_STORAGE_KEY, JSON.stringify(draft));
-}
-
-async function clearDebugDraftFromStorage() {
-  if (typeof window === "undefined") return;
-  const fallbackStorage = window.localStorage;
-
-  if ("indexedDB" in window) {
-    try {
-      const database = await openDebugDraftDatabase();
-      await new Promise<void>((resolve, reject) => {
-        const transaction = database.transaction(DEBUG_DRAFT_STORE_NAME, "readwrite");
-        const store = transaction.objectStore(DEBUG_DRAFT_STORE_NAME);
-        store.delete(DEBUG_DRAFT_RECORD_KEY);
-        transaction.oncomplete = () => {
-          database.close();
-          resolve();
-        };
-        transaction.onerror = () => reject(transaction.error ?? new Error("Failed to clear debug draft."));
-      });
-    } catch {
-      // Ignore and still clear the localStorage fallback.
-    }
-  }
-
-  fallbackStorage.removeItem(DEBUG_DRAFT_STORAGE_KEY);
-}
-
-const SOURCE_QUALITY_RANK: Record<Company["sourceQuality"], number> = {
-  review: 0,
-  low: 1,
-  medium: 2,
-  high: 3,
-};
-
-function firstPresent<T>(values: Array<T | null | undefined>) {
-  return values.find((value): value is T => value != null && value !== "");
-}
-
-function bestSourceQuality(companies: Company[]) {
-  return companies.reduce<Company["sourceQuality"]>(
-    (best, company) => (SOURCE_QUALITY_RANK[company.sourceQuality] > SOURCE_QUALITY_RANK[best] ? company.sourceQuality : best),
-    "review",
-  );
-}
-
-function uniqueTags(tags: Tag[]) {
-  const seen = new Set<string>();
-  const nextTags: Tag[] = [];
-
-  for (const tag of tags) {
-    const key = tag.name.trim().toLowerCase() || tag.id;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    nextTags.push(tag);
-  }
-
-  return nextTags;
-}
-
-function tagIdForGeneratedName(name: string) {
-  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return `local-enrichment-tag-${slug || "tag"}`;
-}
-
-function enrichmentResponseTags(tags: Tag[] | undefined, tagNames: string[] | undefined) {
-  if (tags && tags.length > 0) return tags;
-  return (tagNames ?? []).map((name) => ({
-    id: tagIdForGeneratedName(name),
-    name,
-    color: DEFAULT_COMPANY_TAG_COLOR,
-  }));
-}
-
-function mergeInvestmentRelationships(relationships: InvestmentRelationship[]) {
-  const byId = new Map<string, InvestmentRelationship>();
-  for (const relationship of relationships) {
-    const existing = byId.get(relationship.id);
-    if (!existing) {
-      byId.set(relationship.id, { ...relationship, deals: [...relationship.deals] });
-      continue;
-    }
-
-    byId.set(relationship.id, {
-      ...existing,
-      investmentStatus: existing.investmentStatus === "current_investor" ? existing.investmentStatus : relationship.investmentStatus,
-      capacityStatus: existing.capacityStatus === "fully_allocated" ? existing.capacityStatus : relationship.capacityStatus,
-      notes: existing.notes ?? relationship.notes,
-      lastInvestedDate: [existing.lastInvestedDate, relationship.lastInvestedDate].filter(Boolean).sort().at(-1) ?? null,
-      deals: [...existing.deals, ...relationship.deals].filter((deal, index, deals) => deals.findIndex((item) => item.id === deal.id) === index),
-    });
-  }
-  return [...byId.values()];
-}
-
-function mergeCompanyPeople(companies: Company[]) {
-  const peopleById = new Map<string, Person>();
-
-  for (const company of companies) {
-    for (const person of company.people) {
-      const existing = peopleById.get(person.id);
-      peopleById.set(person.id, existing ? mergePersonDetails(existing, person, existing.id) : person);
-    }
-  }
-
-  return [...peopleById.values()];
-}
-
-function mergeCompanyActivities(companies: Company[]) {
-  const activitiesById = new Map<string, Company["activities"][number]>();
-
-  for (const company of companies) {
-    for (const activity of company.activities) {
-      activitiesById.set(activity.id, activity);
-    }
-  }
-
-  return [...activitiesById.values()].sort((left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime());
-}
-
-function latestActivityDate(companies: Company[]) {
-  return (
-    companies
-      .map((company) => company.lastActivityAt)
-      .filter((date): date is string => Boolean(date))
-      .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] ?? null
-  );
-}
-
-function bestNextTask(companies: Company[]) {
-  const tasks = companies.map((company) => company.nextTask).filter((task): task is NonNullable<Company["nextTask"]> => Boolean(task));
-  if (tasks.length === 0) return null;
-
-  return [...tasks].sort((left, right) => {
-    if (!left.dueDate && !right.dueDate) return 0;
-    if (!left.dueDate) return 1;
-    if (!right.dueDate) return -1;
-    return left.dueDate.localeCompare(right.dueDate);
-  })[0];
-}
-
-function mergeCompanyDetails(target: Company, sources: Company[]): Company {
-  const companies = [target, ...sources];
-  const confidenceValues = companies.map((company) => company.mergeConfidence).filter((value): value is number => value != null);
-
-  return {
-    ...target,
-    websiteDomains: normalizeCompanyWebsites(companies.flatMap((company) => company.websiteDomains)),
-    websiteDomain: normalizeCompanyWebsites(companies.flatMap((company) => company.websiteDomains))[0] ?? null,
-    description: target.description ?? firstPresent(sources.map((company) => company.description)) ?? null,
-    country: target.country ?? firstPresent(sources.map((company) => company.country)) ?? null,
-    categories: normalizePersonCategories(companies.flatMap((company) => company.categories)),
-    sourceQuality: bestSourceQuality(companies),
-    tags: uniqueTags(companies.flatMap((company) => company.tags)),
-    people: mergeCompanyPeople(companies),
-    activities: mergeCompanyActivities(companies),
-    nextTask: target.nextTask ?? bestNextTask(sources) ?? null,
-    lastActivityAt: latestActivityDate(companies),
-    mergeConfidence: confidenceValues.length > 0 ? Math.max(...confidenceValues) : null,
-    enrichment: target.enrichment ?? firstPresent(sources.map((company) => company.enrichment)) ?? null,
-    investmentRelationships: mergeInvestmentRelationships(companies.flatMap((company) => company.investmentRelationships)),
-  };
-}
-
-function mergePersonDetails(target: Person, source: Person, forcedId = target.id): Person {
-  const emails = uniqueList([...target.emails, ...source.emails]);
-  return {
-    id: forcedId,
-    sourcePersonIds: uniqueList([...personSourceIds(target), ...personSourceIds(source)]),
-    displayName: target.displayName !== "Unnamed contact" ? target.displayName : source.displayName,
-    firstName: target.firstName ?? source.firstName,
-    lastName: target.lastName ?? source.lastName,
-    email: target.email ?? source.email ?? emails[0] ?? null,
-    emails,
-    phone: target.phone ?? source.phone,
-    linkedinUrl: target.linkedinUrl ?? source.linkedinUrl,
-    jobTitle: target.jobTitle ?? source.jobTitle,
-    country: target.country ?? source.country,
-    categories: uniqueList([...target.categories, ...source.categories]),
-    connectionStrength: target.connectionStrength ?? source.connectionStrength,
-    highlighted: target.highlighted || source.highlighted,
-    investmentRelationships: mergeInvestmentRelationships([...target.investmentRelationships, ...source.investmentRelationships]),
-  };
-}
-
-function groupPeopleDirectory(rows: Array<{ person: Person; company: Company }>): PeopleDirectoryRow[] {
-  const grouped = new Map<string, PeopleDirectoryRow>();
-
-  for (const row of rows) {
-    const existing = grouped.get(row.person.id);
-    if (!existing) {
-      grouped.set(row.person.id, {
-        person: {
-          ...row.person,
-          sourcePersonIds: personSourceIds(row.person),
-          emails: uniqueList(row.person.emails),
-          categories: uniqueList(row.person.categories),
-        },
-        company: row.company,
-        companies: [row.company],
-      });
-      continue;
-    }
-
-    existing.person = mergePersonDetails(existing.person, row.person, existing.person.id);
-    if (!existing.companies.some((company) => company.id === row.company.id)) {
-      existing.companies.push(row.company);
-    }
-  }
-
-  return [...grouped.values()];
-}
-
-function initialCompanyIdFor(companies: Company[], companyId?: string) {
-  if (companyId && companies.some((company) => company.id === companyId)) return companyId;
-  return companies[0]?.id ?? "";
-}
+import type {
+  InvestmentDraft, AccountingDocumentDraft, AccountingLedgerDraft,
+  PipelineStatusDraft, EnrichmentDraft, EnrichmentBatchProgress,
+  TagSummary, PeopleDirectoryRow, PeoplePageSize,
+} from "@/components/shared";
+import type { DealPipelineRow } from "@/lib/deal-pipeline";
+import type {
+  ActiveView, CompanyPageSize, PendingChangeRecord, PendingChange, CrmShellProps,
+   AccountingTab, AccountingRecordActionTarget, EnrichmentApiResponse,
+} from "@/lib/crm-types";
+import {
+  withAccountingSummaries, emptyAccountingData,
+  buildCompanySearchText, companyMatches, personMatches,
+  exportCompanies, exportDealPipeline, exportPeople,
+  normalizeEnrichmentKeywords, defaultCompanyEnrichment,
+  relationshipMatches, defaultInvestmentRelationship, relationshipForCompany,
+  enrichmentDraftForCompany, investmentDraftForRelationship,
+  uniqueList, personSourceIds,
+  mergeInvestmentRelationships, mergeCompanyPeople, mergeCompanyActivities,
+  latestActivityDate, bestNextTask, mergeCompanyDetails, mergePersonDetails,
+  groupPeopleDirectory, initialCompanyIdFor, uniqueValues,
+  buildTagSummaries, uniqueTags, enrichmentResponseTags,
+  formatDealStatusSummary, emailDomain, extractEmailsFromText,
+  COMPANY_PAGE_SIZE_OPTIONS, INCORRECT_EMAIL_TAG,
+  accountingSearchParts,
+} from "@/lib/crm-utils";
 
 export function CrmShell({
   initialData,
@@ -981,13 +130,10 @@ export function CrmShell({
   const [bulkTag, setBulkTag] = useState("");
   const [noteText, setNoteText] = useState("");
   const [pipelineDrafts, setPipelineDrafts] = useState<Record<string, PipelineStatusDraft>>({});
-  const [pendingChanges, setPendingChanges] = useState<PendingChange[]>([]);
-  const [isPushingChanges, setIsPushingChanges] = useState(false);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
-  const [debugMode, setDebugMode] = useState(false);
-  const [debugModeReady, setDebugModeReady] = useState(false);
-  const debugDraftHydratedRef = useRef(false);
-  const [debugStorageIssue, setDebugStorageIssue] = useState<string | null>(null);
+  const {
+    pendingChanges, setPendingChanges, isPushingChanges, syncMessage, setSyncMessage,
+    buildPendingChange, queuePendingChange, pushPendingChanges, pushPendingEnrichments, queuePersonUpdate,
+  } = usePendingChanges(initialData);
   const [incorrectEmails, setIncorrectEmails] = useState<Set<string>>(new Set());
   const [incorrectEmailMessage, setIncorrectEmailMessage] = useState<string | null>(null);
   const [companyModalId, setCompanyModalId] = useState<string | null>(null);
@@ -1019,6 +165,36 @@ export function CrmShell({
   const [isSavingAccounting, setIsSavingAccounting] = useState(false);
   const stopBatchRef = useRef(false);
   const batchAbortControllerRef = useRef<AbortController | null>(null);
+  const {
+    debugMode, debugModeReady, debugStorageIssue, debugDraftHydratedRef,
+    toggleDebugMode, resetDebugDraft,
+  } = useCrmDebug({
+    initialData,
+    initialCompanyId,
+    companyId,
+    buildPendingChange,
+    companies,
+    pendingChanges,
+    syncMessage,
+    setCompanies,
+    setPendingChanges,
+    setSelectedIds,
+    setActiveCompanyId,
+    setCompanyModalId,
+    setBatchProgress,
+    stopBatchRef,
+    batchAbortControllerRef,
+    setCompanyDraft,
+    setEnrichmentDraft,
+    setCompanyInvestmentDraft,
+    setPipelineDrafts,
+    setEnrichmentMessage,
+    setTagDrafts,
+    setPeopleMessage,
+    setIncorrectEmailMessage,
+    setSyncMessage,
+    clearCompanyFilters,
+  });
   const deferredCompanyQuery = useDeferredValue(query.trim().toLowerCase());
   const deferredPeopleQuery = useDeferredValue(peopleQuery.trim().toLowerCase());
   const deferredAccountingQuery = useDeferredValue(accountingQuery.trim().toLowerCase());
@@ -1247,162 +423,6 @@ export function CrmShell({
   const dealPipelineRows = useMemo(() => buildDealPipelineRows(companies), [companies]);
   const dealPipelineGroups = useMemo(() => groupDealPipelineRows(dealPipelineRows), [dealPipelineRows]);
 
-  const buildPendingChange = useCallback((record: PendingChangeRecord): PendingChange => {
-    switch (record.kind) {
-      case "person":
-        return {
-          key: record.key,
-          label: record.label,
-          type: "person",
-          personUpdate: record.personUpdate,
-          record,
-          run: () =>
-            initialData.authMode === "supabase"
-              ? updatePersonAction(record.personUpdate)
-              : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-        };
-      case "stage":
-        return {
-          key: record.key,
-          label: record.label,
-          record,
-          run: () =>
-            initialData.authMode === "supabase" && record.organizationId && record.companyIds.every(isUuid)
-              ? moveStageAction({ organizationId: record.organizationId, companyIds: record.companyIds, stage: record.stage })
-              : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-        };
-      case "company-tag":
-        return {
-          key: record.key,
-          label: record.label,
-          record,
-          run: () =>
-            initialData.authMode === "supabase" && record.organizationId && record.companyIds.every(isUuid)
-              ? addCompanyTagAction({
-                organizationId: record.organizationId,
-                companyIds: record.companyIds,
-                tagName: record.tagName,
-                color: record.color,
-              })
-              : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-        };
-      case "highlight":
-        return {
-          key: record.key,
-          label: record.label,
-          record,
-          run: () =>
-            initialData.authMode === "supabase" && isUuid(record.companyId) && isUuid(record.personId)
-              ? highlightPersonAction({ companyId: record.companyId, personId: record.personId, highlighted: record.highlighted })
-              : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-        };
-      case "company-update":
-        return {
-          key: record.key,
-          label: record.label,
-          record,
-          run: () =>
-            initialData.authMode === "supabase"
-              ? updateCompanyAction(record.payload)
-              : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-        };
-      case "company-enrichment-update":
-        return {
-          key: record.key,
-          label: record.label,
-          record,
-          run: () =>
-            initialData.authMode === "supabase"
-              ? updateCompanyEnrichmentAction(record.payload)
-              : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-        };
-      case "investment-relationship":
-        return {
-          key: record.key,
-          label: record.label,
-          record,
-          run: () =>
-            initialData.authMode === "supabase"
-              ? updateInvestmentRelationshipAction(record.payload)
-              : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-        };
-      case "investment-deal":
-        return {
-          key: record.key,
-          label: record.label,
-          record,
-          run: () =>
-            initialData.authMode === "supabase"
-              ? addInvestmentDealAction(record.payload)
-              : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-        };
-      case "investment-deal-status":
-        return {
-          key: record.key,
-          label: record.label,
-          record,
-          run: () =>
-            initialData.authMode === "supabase"
-              ? updateInvestmentDealStatusAction(record.payload)
-              : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-        };
-      case "company-tag-rename":
-        return {
-          key: record.key,
-          label: record.label,
-          record,
-          run: () =>
-            initialData.authMode === "supabase" && record.organizationId && isUuid(record.tagId)
-              ? renameCompanyTagAction({ organizationId: record.organizationId, tagId: record.tagId, name: record.name })
-              : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-        };
-      case "activity-note":
-        return {
-          key: record.key,
-          label: record.label,
-          record,
-          run: () =>
-            initialData.authMode === "supabase" && record.organizationId && isUuid(record.companyId)
-              ? addActivityAction({
-                organizationId: record.organizationId,
-                companyId: record.companyId,
-                activityType: "note",
-                summary: record.summary,
-              })
-              : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-        };
-      case "company-merge":
-        return {
-          key: record.key,
-          label: record.label,
-          record,
-          run: () =>
-            initialData.authMode === "supabase" && record.organizationId && isUuid(record.targetCompanyId) && record.sourceCompanyIds.every(isUuid)
-              ? mergeCompaniesAction({
-                organizationId: record.organizationId,
-                targetCompanyId: record.targetCompanyId,
-                sourceCompanyIds: record.sourceCompanyIds,
-              })
-              : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-        };
-      case "people-merge":
-        return {
-          key: record.key,
-          label: record.label,
-          runBeforePersonBatch: true,
-          record,
-          run: () =>
-            initialData.authMode === "supabase" && record.organizationId && isUuid(record.targetPersonId) && isUuid(record.sourcePersonId)
-              ? mergePeopleAction({
-                organizationId: record.organizationId,
-                targetPersonId: record.targetPersonId,
-                sourcePersonId: record.sourcePersonId,
-              })
-              : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-        };
-    }
-  }, [initialData.authMode]);
-
   useEffect(() => {
     if (!authSuccess) return;
 
@@ -1463,115 +483,6 @@ export function CrmShell({
       cancelled = true;
     };
   }, [companies, companyId]);
-
-  useEffect(() => {
-    let storedDebugMode = false;
-    let cancelled = false;
-
-    try {
-      storedDebugMode = window.localStorage.getItem(DEBUG_MODE_STORAGE_KEY) === "true";
-    } catch {
-      storedDebugMode = false;
-    }
-
-    if (storedDebugMode) {
-      debugDraftHydratedRef.current = false;
-    }
-
-    queueMicrotask(() => {
-      if (cancelled) return;
-      setDebugMode(storedDebugMode);
-      setDebugModeReady(true);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!debugModeReady) return;
-
-    if (!debugMode) {
-      debugDraftHydratedRef.current = true;
-      return;
-    }
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const parsed = await readDebugDraftFromStorage();
-        if (cancelled || !parsed) return;
-
-        if (parsed.version !== DEBUG_DRAFT_VERSION || !Array.isArray(parsed.companies) || !Array.isArray(parsed.pendingChanges)) {
-          await clearDebugDraftFromStorage();
-          return;
-        }
-
-        const draftCompanies = parsed.companies as Company[];
-        const draftPendingChanges = parsed.pendingChanges;
-
-        queueMicrotask(() => {
-          if (cancelled) return;
-          setCompanies(draftCompanies);
-          setPendingChanges(draftPendingChanges.filter(isPendingChangeRecord).map(buildPendingChange));
-          setSyncMessage(parsed.syncMessage ?? "Restored debug draft.");
-          setActiveCompanyId((current) => draftCompanies.some((company) => company.id === current) ? current : draftCompanies[0]?.id ?? "");
-          setDebugStorageIssue(null);
-        });
-      } catch {
-        if (!cancelled) {
-          queueMicrotask(() => setDebugStorageIssue("Could not restore the local debug draft for this browser."));
-        }
-      } finally {
-        debugDraftHydratedRef.current = true;
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [buildPendingChange, debugMode, debugModeReady]);
-
-  useEffect(() => {
-    if (!debugModeReady) return;
-    if (!debugDraftHydratedRef.current) return;
-
-    if (!debugMode) {
-      try {
-        window.localStorage.setItem(DEBUG_MODE_STORAGE_KEY, "false");
-      } catch {
-        // Ignore tiny flag write failures.
-      }
-      void clearDebugDraftFromStorage();
-      return;
-    }
-    try {
-      window.localStorage.setItem(DEBUG_MODE_STORAGE_KEY, "true");
-    } catch {
-      // Ignore tiny flag write failures.
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      void writeDebugDraftToStorage({
-        version: DEBUG_DRAFT_VERSION,
-        companies,
-        pendingChanges: pendingChanges.map((change) => change.record),
-        syncMessage,
-      } satisfies DebugDraft)
-        .then(() => {
-          setDebugStorageIssue((current) => (current ? null : current));
-        })
-        .catch((error) => {
-          console.error(error);
-          setDebugStorageIssue("This draft is too large to persist in browser storage. Your edits still exist in this tab, but they may not survive a reload.");
-        });
-    }, 250);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [companies, debugMode, debugModeReady, pendingChanges, syncMessage]);
 
   function updateCompanies(updater: (company: Company) => Company) {
     setCompanies((current) => current.map(updater));
@@ -1637,40 +548,6 @@ export function CrmShell({
     openCompanyModal(companyId);
   }
 
-  function toggleDebugMode() {
-    setDebugMode((current) => {
-      const next = !current;
-      if (next) debugDraftHydratedRef.current = false;
-      if (!next) setDebugStorageIssue(null);
-      setSyncMessage(next ? "Debug mode enabled. Draft edits now persist locally." : "Debug mode disabled. Local draft persistence is off.");
-      return next;
-    });
-  }
-
-  function resetDebugDraft() {
-    setCompanies(initialData.companies);
-    setPendingChanges([]);
-    setSelectedIds(new Set(companyId && initialCompanyId ? [initialCompanyId] : []));
-    setActiveCompanyId(initialCompanyId);
-    setCompanyModalId(null);
-    clearCompanyFilters();
-    setBatchProgress(null);
-    stopBatchRef.current = false;
-    batchAbortControllerRef.current?.abort();
-    batchAbortControllerRef.current = null;
-    setCompanyDraft({ companyId: "", name: "", websites: "", description: "", country: "" });
-    setEnrichmentDraft(null);
-    setCompanyInvestmentDraft(null);
-    setPipelineDrafts({});
-    setEnrichmentMessage(null);
-    setTagDrafts({});
-    setPeopleMessage(null);
-    setIncorrectEmailMessage(null);
-    setDebugStorageIssue(null);
-    setSyncMessage("Debug draft reset to the latest loaded data.");
-    void clearDebugDraftFromStorage();
-  }
-
   function startCompanyMerge() {
     if (selectedCompanies.length < 2) return;
     setCompanyMergeTargetId(selectedIds.has(activeCompanyId) ? activeCompanyId : selectedCompanies[0]?.id ?? null);
@@ -1678,163 +555,6 @@ export function CrmShell({
 
   function closeCompanyMerge() {
     setCompanyMergeTargetId(null);
-  }
-
-  function queuePendingChange(change: PendingChange) {
-    setPendingChanges((current) => {
-      const existingIndex = current.findIndex((item) => item.key === change.key);
-      if (existingIndex === -1) return [...current, change];
-
-      const next = [...current];
-      const existingChange = current[existingIndex];
-      if (isPendingPersonChange(existingChange) && isPendingPersonChange(change)) {
-        const mergedPersonUpdate = mergePendingPersonUpdate(existingChange.personUpdate, change.personUpdate);
-        next[existingIndex] = {
-          ...change,
-          personUpdate: mergedPersonUpdate,
-          record: {
-            kind: "person",
-            key: change.key,
-            label: change.label,
-            personUpdate: mergedPersonUpdate,
-          },
-        };
-      } else {
-        next[existingIndex] = change;
-      }
-      return next;
-    });
-    setSyncMessage(`${change.label} queued locally.`);
-  }
-
-  async function pushPendingChanges() {
-    if (pendingChanges.length === 0 || isPushingChanges) return;
-
-    const changes = pendingChanges;
-    const prePersonChanges = changes.filter((change) => change.runBeforePersonBatch);
-    const personChanges = changes.filter(isPendingPersonChange);
-    const otherChanges = changes.filter((change) => !isPendingPersonChange(change) && !change.runBeforePersonBatch);
-    setIsPushingChanges(true);
-    setSyncMessage(`Pushing ${formatChangeCount(changes.length)}...`);
-
-    for (let index = 0; index < prePersonChanges.length; index += 1) {
-      const change = prePersonChanges[index];
-      const result = await change.run();
-      if (!result.ok) {
-        setPendingChanges(changes);
-        setSyncMessage(`Push stopped at "${change.label}": ${result.message}`);
-        setIsPushingChanges(false);
-        return;
-      }
-    }
-
-    if (personChanges.length > 0) {
-      const personBatches = chunkItems(personChanges, PUSH_BATCH_SIZE);
-
-      for (let batchIndex = 0; batchIndex < personBatches.length; batchIndex += 1) {
-        const batch = personBatches[batchIndex];
-        setSyncMessage(
-          `Pushing contact batch ${formatNumber(batchIndex + 1)} of ${formatNumber(personBatches.length)} (${formatNumber(batch.length)} updates)...`,
-        );
-        const result = initialData.authMode === "supabase"
-          ? await updatePeopleAction({ updates: batch.map((change) => change.personUpdate) })
-          : { ok: false, message: "Sign in with Supabase configured before pushing changes." };
-
-        if (!result.ok) {
-          setPendingChanges([...personChanges.slice(batchIndex * PUSH_BATCH_SIZE), ...otherChanges]);
-          setSyncMessage(`Push stopped at contact updates: ${result.message}`);
-          setIsPushingChanges(false);
-          return;
-        }
-      }
-    }
-
-    for (let index = 0; index < otherChanges.length; index += 1) {
-      const change = otherChanges[index];
-      const result = await change.run();
-      if (!result.ok) {
-        setPendingChanges(otherChanges.slice(index));
-        setSyncMessage(`Push stopped at "${change.label}": ${result.message}`);
-        setIsPushingChanges(false);
-        return;
-      }
-    }
-
-    setPendingChanges([]);
-    setSyncMessage(`Pushed ${formatChangeCount(changes.length)}.`);
-    setIsPushingChanges(false);
-  }
-
-  async function pushPendingEnrichments() {
-    if (pendingEnrichmentCount === 0 || isPushingChanges) return;
-
-    const changes = pendingChanges.filter((change) => change.record.kind === "company-enrichment-update");
-    const changeKeys = new Set(changes.map((change) => change.key));
-    setIsPushingChanges(true);
-    setSyncMessage(`Pushing ${formatNumber(changes.length)} queued enrichment${changes.length === 1 ? "" : "s"}...`);
-
-    for (let index = 0; index < changes.length; index += 1) {
-      const change = changes[index];
-      const result = await change.run();
-      if (!result.ok) {
-        setSyncMessage(`Push stopped at "${change.label}": ${result.message}`);
-        setIsPushingChanges(false);
-        return;
-      }
-    }
-
-    setPendingChanges((current) => current.filter((change) => !changeKeys.has(change.key)));
-    setSyncMessage(`Pushed ${formatNumber(changes.length)} enrichment${changes.length === 1 ? "" : "s"}.`);
-    setIsPushingChanges(false);
-  }
-
-  function queuePersonUpdate(person: Person, label: string, options: { syncEmails?: boolean } = {}) {
-    const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
-    const syncEmails = options.syncEmails ?? true;
-    for (const personId of personSourceIds(person)) {
-      const personUpdate = organizationId && isUuid(personId)
-        ? {
-            organizationId,
-            personId,
-            displayName: person.displayName,
-            categories: person.categories,
-            jobTitle: person.jobTitle,
-            linkedinUrl: person.linkedinUrl,
-            phone: person.phone,
-            country: person.country,
-            syncEmails,
-            ...(syncEmails ? { emails: person.emails } : {}),
-          }
-        : undefined;
-
-      queuePendingChange({
-        key: `person:${personId}`,
-        label,
-        type: "person",
-        personUpdate,
-        record: {
-          kind: "person",
-          key: `person:${personId}`,
-          label,
-          personUpdate: personUpdate ?? {
-            organizationId: "",
-            personId,
-            displayName: person.displayName,
-            categories: person.categories,
-            jobTitle: person.jobTitle,
-            linkedinUrl: person.linkedinUrl,
-            phone: person.phone,
-            country: person.country,
-            syncEmails,
-            ...(syncEmails ? { emails: person.emails } : {}),
-          },
-        },
-        run: () =>
-          initialData.authMode === "supabase" && personUpdate
-            ? updatePersonAction(personUpdate)
-            : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-      });
-    }
   }
 
   async function importIncorrectEmailsCsv(file: File) {

@@ -1,7 +1,7 @@
 import { Building2, CircleDot, CreditCard, FileSpreadsheet, Handshake, ListChecks, Tags, UsersRound } from "lucide-react";
 import clsx from "clsx";
 import { NavButton } from "@/components/shared";
-import type { ActiveView } from "@/components/crm-shell";
+import type { ActiveView } from "@/lib/crm-types";
 
 export function Sidebar({
   activeView,

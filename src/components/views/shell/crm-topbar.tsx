@@ -1,7 +1,7 @@
 import { FlaskConical, Trash2, Upload, UserRound } from "lucide-react";
 import clsx from "clsx";
 import { signOut } from "@/app/actions";
-import type { ActiveView } from "@/components/crm-shell";
+import type { ActiveView } from "@/lib/crm-types";
 
 const VIEW_TITLES: Record<ActiveView, string> = {
   companies: "Company golden source",
