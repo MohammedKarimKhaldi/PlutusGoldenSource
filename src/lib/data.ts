@@ -222,6 +222,8 @@ type FundraisingClientRow = {
   signed_on: string | null;
   target_raise_amount_minor: number | null;
   target_raise_currency: string | null;
+  retainer_amount_minor: number | null;
+  retainer_currency: string | null;
   materials_url: string | null;
   data_room_url: string | null;
   notes: string | null;
@@ -447,6 +449,8 @@ function mapFundraisingClient(row: FundraisingClientRow): FundraisingClient {
     signedOn: row.signed_on,
     targetRaiseAmountMinor: row.target_raise_amount_minor == null ? null : Number(row.target_raise_amount_minor),
     targetRaiseCurrency: row.target_raise_currency,
+    retainerAmountMinor: row.retainer_amount_minor == null ? null : Number(row.retainer_amount_minor),
+    retainerCurrency: row.retainer_currency,
     materialsUrl: row.materials_url,
     dataRoomUrl: row.data_room_url,
     notes: row.notes,
@@ -544,7 +548,7 @@ async function loadClientDashboardForOrganization(supabase: SupabaseServerClient
       fetchPaged<FundraisingClientRow>("fundraising clients", (from, to) =>
         supabase
           .from("fundraising_clients")
-          .select("id,company_id,mandate_name,stage,owner_id,primary_contact_person_id,signed_on,target_raise_amount_minor,target_raise_currency,materials_url,data_room_url,notes,created_by,updated_by,created_at,updated_at")
+          .select("id,company_id,mandate_name,stage,owner_id,primary_contact_person_id,signed_on,target_raise_amount_minor,target_raise_currency,retainer_amount_minor,retainer_currency,materials_url,data_room_url,notes,created_by,updated_by,created_at,updated_at")
           .eq("organization_id", organizationId)
           .order("updated_at", { ascending: false })
           .range(from, to),

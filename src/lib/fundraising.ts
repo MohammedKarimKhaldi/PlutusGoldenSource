@@ -48,6 +48,11 @@ export function buildFundraisingSummaries(
     summary.ticketSizeMaxMinor += target.ticketSizeMaxMinor ?? target.ticketSizeMinMinor ?? 0;
   }
 
+  for (const client of clients) {
+    if (!client.retainerCurrency || client.retainerAmountMinor == null) continue;
+    addCurrencySummary(summaries, client.retainerCurrency).retainerIncomeMinor += client.retainerAmountMinor;
+  }
+
   if (accounting) {
     const accountingSummaries = buildAccountingSummaries(
       accounting.documents.filter((document) => document.companyId && clientCompanyIds.has(document.companyId)),

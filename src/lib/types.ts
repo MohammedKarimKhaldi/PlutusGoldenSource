@@ -242,6 +242,8 @@ export type FundraisingClient = {
   signedOn: string | null;
   targetRaiseAmountMinor: number | null;
   targetRaiseCurrency: string | null;
+  retainerAmountMinor: number | null;
+  retainerCurrency: string | null;
   materialsUrl: string | null;
   dataRoomUrl: string | null;
   notes: string | null;

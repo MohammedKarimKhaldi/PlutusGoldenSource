@@ -360,6 +360,8 @@ export const fundraisingClientSchema = z
     signedOn: z.string().date().nullable().optional(),
     targetRaiseAmountMinor: optionalMoneyMinorSchema,
     targetRaiseCurrency: optionalCurrencySchema,
+    retainerAmountMinor: optionalMoneyMinorSchema,
+    retainerCurrency: optionalCurrencySchema,
     materialsUrl: nullableTrimmedTextSchema(1000),
     dataRoomUrl: nullableTrimmedTextSchema(1000),
     notes: nullableTrimmedTextSchema(4000),
@@ -378,6 +380,14 @@ export const fundraisingClientSchema = z
         code: "custom",
         message: "Target raise amount and currency must be provided together.",
         path: ["targetRaiseCurrency"],
+      });
+    }
+
+    if ((value.retainerAmountMinor == null) !== (value.retainerCurrency == null)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Retainer amount and currency must be provided together.",
+        path: ["retainerCurrency"],
       });
     }
   });

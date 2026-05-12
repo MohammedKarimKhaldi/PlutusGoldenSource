@@ -199,6 +199,8 @@ type FundraisingClientRow = {
   signed_on: string | null;
   target_raise_amount_minor: number | null;
   target_raise_currency: string | null;
+  retainer_amount_minor: number | null;
+  retainer_currency: string | null;
   materials_url: string | null;
   data_room_url: string | null;
   notes: string | null;
@@ -248,7 +250,7 @@ const ACCOUNTING_DOCUMENT_COLUMNS =
 const ACCOUNTING_LEDGER_COLUMNS =
   "id,document_id,company_id,entry_type,direction,amount_minor,currency,occurred_on,external_reference,document_url,notes,created_by,updated_by,voided_at,voided_by,void_reason,created_at,updated_at";
 const FUNDRAISING_CLIENT_COLUMNS =
-  "id,company_id,mandate_name,stage,owner_id,primary_contact_person_id,signed_on,target_raise_amount_minor,target_raise_currency,materials_url,data_room_url,notes,created_by,updated_by,created_at,updated_at";
+  "id,company_id,mandate_name,stage,owner_id,primary_contact_person_id,signed_on,target_raise_amount_minor,target_raise_currency,retainer_amount_minor,retainer_currency,materials_url,data_room_url,notes,created_by,updated_by,created_at,updated_at";
 const FUNDRAISING_TARGET_COLUMNS =
   "id,client_id,investor_company_id,investor_person_id,investor_name,investor_email,investor_type,ticket_size_min_minor,ticket_size_max_minor,ticket_size_currency,stage,owner_id,last_contacted_at,next_step,notes,created_by,updated_by,created_at,updated_at";
 
@@ -326,6 +328,8 @@ function mapFundraisingClient(row: FundraisingClientRow): FundraisingClient {
     signedOn: row.signed_on,
     targetRaiseAmountMinor: row.target_raise_amount_minor == null ? null : Number(row.target_raise_amount_minor),
     targetRaiseCurrency: row.target_raise_currency,
+    retainerAmountMinor: row.retainer_amount_minor == null ? null : Number(row.retainer_amount_minor),
+    retainerCurrency: row.retainer_currency,
     materialsUrl: row.materials_url,
     dataRoomUrl: row.data_room_url,
     notes: row.notes,
@@ -676,6 +680,8 @@ export async function saveFundraisingClientAction(input: unknown): Promise<Fundr
     signed_on: parsed.data.signedOn ?? null,
     target_raise_amount_minor: parsed.data.targetRaiseAmountMinor ?? null,
     target_raise_currency: parsed.data.targetRaiseCurrency ?? null,
+    retainer_amount_minor: parsed.data.retainerAmountMinor ?? null,
+    retainer_currency: parsed.data.retainerCurrency ?? null,
     materials_url: parsed.data.materialsUrl ?? null,
     data_room_url: parsed.data.dataRoomUrl ?? null,
     notes: parsed.data.notes ?? null,
@@ -683,28 +689,59 @@ export async function saveFundraisingClientAction(input: unknown): Promise<Fundr
     updated_at: new Date().toISOString(),
   };
 
-  const query = parsed.data.clientId
+  const isNewClient = !parsed.data.clientId;
+
+  const query = isNewClient
     ? supabase
+        .from("fundraising_clients")
+        .insert({ ...row, created_by: membership.userId })
+        .select(FUNDRAISING_CLIENT_COLUMNS)
+        .single()
+    : supabase
         .from("fundraising_clients")
         .update(row)
         .eq("organization_id", parsed.data.organizationId)
         .eq("id", parsed.data.clientId)
         .select(FUNDRAISING_CLIENT_COLUMNS)
-        .maybeSingle()
-    : supabase
-        .from("fundraising_clients")
-        .insert({ ...row, created_by: membership.userId })
-        .select(FUNDRAISING_CLIENT_COLUMNS)
-        .single();
+        .maybeSingle();
 
   const { data, error } = await query;
   if (error) return { ok: false, message: error.message };
   if (!data) return { ok: false, message: "Could not save this fundraising client." };
 
+  if (isNewClient && parsed.data.retainerAmountMinor != null && companyId) {
+    const docResult = await supabase.from("accounting_documents").insert({
+      organization_id: parsed.data.organizationId,
+      company_id: companyId,
+      document_type: "retainer",
+      status: "open",
+      title: `Retainer — ${parsed.data.mandateName}`,
+      amount_minor: parsed.data.retainerAmountMinor,
+      currency: parsed.data.retainerCurrency,
+      created_by: membership.userId,
+      updated_by: membership.userId,
+    }).select("id").single();
+
+    if (!docResult.error && docResult.data) {
+      await supabase.from("accounting_ledger_entries").insert({
+        organization_id: parsed.data.organizationId,
+        document_id: docResult.data.id,
+        company_id: companyId,
+        entry_type: "retainer_payment",
+        direction: "incoming",
+        amount_minor: parsed.data.retainerAmountMinor,
+        currency: parsed.data.retainerCurrency,
+        occurred_on: new Date().toISOString().slice(0, 10),
+        created_by: membership.userId,
+        updated_by: membership.userId,
+      });
+    }
+  }
+
   await revalidateDashboard();
   return {
     ok: true,
-    message: parsed.data.clientId ? "Fundraising client saved." : "Fundraising client created.",
+    message: isNewClient ? "Fundraising client created." : "Fundraising client saved.",
     client: mapFundraisingClient(data as FundraisingClientRow),
   };
 }
