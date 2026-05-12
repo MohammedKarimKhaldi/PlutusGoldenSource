@@ -8,36 +8,24 @@ import {
   ArrowUp,
   Building2,
   Check,
-  ChevronDown,
   CircleDot,
   CreditCard,
-  FlaskConical,
-  Download,
   FileSpreadsheet,
-  Filter,
   Flag,
-  GitMerge,
   Handshake,
   ListChecks,
   Mail,
   Pencil,
-  Plus,
-  RefreshCw,
-  Search,
   Star,
-  Tags,
   Upload,
   UsersRound,
-  X,
 } from "lucide-react";
 import clsx from "clsx";
 
 import {
   Metric,
   FilterSelect,
-  MultiFilterSelect,
   NavButton,
-  formatDate,
   formatNumber,
   formatMinorMoney,
   amountInputFromMinor,
@@ -47,7 +35,6 @@ import {
   normalizeSearchValue,
   searchTokens,
   searchTextMatches,
-  SOURCE_QUALITY_LABELS,
   INVESTMENT_STATUS_LABELS,
   CAPACITY_STATUS_LABELS,
   INVESTMENT_DEAL_STATUS_LABELS,
@@ -56,7 +43,6 @@ import {
   ACCOUNTING_LEDGER_ENTRY_TYPE_LABELS,
   ACCOUNTING_DIRECTION_LABELS,
   isUuid,
-  formatCompanyWebsites,
   PEOPLE_PAGE_SIZE_OPTIONS,
   relationshipChipLabel,
 } from "@/components/shared";
@@ -85,28 +71,30 @@ import {
 import { buildAccountingSummaries } from "@/lib/accounting";
 import { normalizeCompanyWebsites } from "@/lib/company-websites";
 import { FundraisingView } from "@/components/fundraising-view";
-import { Sidebar } from "@/components/views/sidebar";
-import { CrmTopbar } from "@/components/views/crm-topbar";
-import { PipelineStrip } from "@/components/views/pipeline-strip";
-import { PipelineView } from "@/components/views/pipeline-view";
-import { CompanyDetailPanel } from "@/components/views/company-detail-panel";
-import { PeopleView } from "@/components/views/people-view";
-import { TagsView } from "@/components/views/tags-view";
-import { TasksView } from "@/components/views/tasks-view";
-import { ImportView } from "@/components/views/import-view";
-import { SyncDock } from "@/components/views/sync-dock";
-import { AccountingView, defaultAccountingDocumentDraft, defaultAccountingLedgerDraft, accountingDocumentDraftFromDocument } from "@/components/views/accounting-view";
-import { AccountingVoidDialog } from "@/components/views/accounting-void-dialog";
-import { ContactEditor } from "@/components/views/contact-editor";
+import { Sidebar } from "@/components/views/shell/sidebar";
+import { CrmTopbar } from "@/components/views/shell/crm-topbar";
+import { PipelineStrip } from "@/components/views/pipeline/pipeline-strip";
+import { PipelineView } from "@/components/views/pipeline/pipeline-view";
+import { DebugBanner } from "@/components/views/shell/debug-banner";
+import { AuthFlash } from "@/components/views/shell/auth-flash";
+import { MetricsGrid } from "@/components/views/import/metrics-grid";
+import { PeopleView } from "@/components/views/people/people-view";
+import { TagsView } from "@/components/views/tags/tags-view";
+import { TasksView } from "@/components/views/tasks/tasks-view";
+import { ImportView } from "@/components/views/import/import-view";
+import { SyncDock } from "@/components/views/shell/sync-dock";
+import { AccountingView, defaultAccountingDocumentDraft, defaultAccountingLedgerDraft, accountingDocumentDraftFromDocument } from "@/components/views/accounting/accounting-view";
+import { AccountingVoidDialog } from "@/components/views/accounting/accounting-void-dialog";
+import { CompaniesView } from "@/components/views/companies/companies-view";
+import { ContactEditor, usePersonEditor } from "@/components/views/people/contact-editor";
 import { buildDealPipelineRows, groupDealPipelineRows, type DealPipelineRow } from "@/lib/deal-pipeline";
 import { DEFAULT_COMPANY_TAG_COLOR } from "@/lib/enrichment/company-tags";
 import {
-  CONTACT_EXPORT_LABELS,
   contactExportValues,
   filterContactExportRows,
   type ContactExportCriterion,
 } from "@/lib/export/contacts";
-import { isValidPersonEmail, normalizePersonCategories, normalizePersonEmails } from "@/lib/person-update";
+import { normalizePersonCategories, normalizePersonEmails } from "@/lib/person-update";
 import type {
   AccountingData,
   AccountingDirection,
@@ -132,6 +120,7 @@ import type {
   AccountingLedgerDraft,
   PipelineStatusDraft,
   EnrichmentDraft,
+  EnrichmentBatchProgress,
   TagSummary,
   PeopleDirectoryRow,
   PeoplePageSize,
@@ -311,15 +300,7 @@ type AccountingRecordActionTarget = {
   title: string;
 };
 
-type EnrichmentBatchProgress = {
-  total: number;
-  completed: number;
-  skipped: number;
-  failed: number;
-  currentName: string | null;
-  stopRequested: boolean;
-  stopped: boolean;
-};
+
 
 const INCORRECT_EMAIL_TAG = "Incorrect email";
 const EMAIL_IN_TEXT_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
@@ -616,10 +597,6 @@ function defaultInvestmentRelationship({
 
 function relationshipForCompany(company: Company) {
   return company.investmentRelationships.find((relationship) => relationshipMatches(relationship, company.id, null)) ?? defaultInvestmentRelationship({ companyId: company.id, personId: null });
-}
-
-function relationshipForPerson(person: Person) {
-  return person.investmentRelationships.find((relationship) => relationshipMatches(relationship, null, person.id)) ?? defaultInvestmentRelationship({ companyId: null, personId: person.id });
 }
 
 function enrichmentDraftForCompany(company: Company): EnrichmentDraft {
@@ -1000,19 +977,7 @@ export function CrmShell({
   const [personMergeTargetId, setPersonMergeTargetId] = useState<string | null>(null);
   const [personMergeQuery, setPersonMergeQuery] = useState("");
   const [peopleMessage, setPeopleMessage] = useState<string | null>(null);
-  const [editingPersonId, setEditingPersonId] = useState<string | null>(null);
-  const [editDisplayName, setEditDisplayName] = useState("");
-  const [editFirstName, setEditFirstName] = useState("");
-  const [editLastName, setEditLastName] = useState("");
-  const [editEmails, setEditEmails] = useState<string[]>([]);
-  const [editJobTitle, setEditJobTitle] = useState("");
-  const [editLinkedinUrl, setEditLinkedinUrl] = useState("");
-  const [editPhone, setEditPhone] = useState("");
-  const [editCountry, setEditCountry] = useState("");
-  const [editCategories, setEditCategories] = useState<string[]>([]);
-  const [editCategoryInput, setEditCategoryInput] = useState("");
-  const [personInvestmentDraft, setPersonInvestmentDraft] = useState<InvestmentDraft | null>(null);
-  const [personEditMessage, setPersonEditMessage] = useState<string | null>(null);
+
   const [bulkTag, setBulkTag] = useState("");
   const [noteText, setNoteText] = useState("");
   const [pipelineDrafts, setPipelineDrafts] = useState<Record<string, PipelineStatusDraft>>({});
@@ -1217,14 +1182,16 @@ export function CrmShell({
     () => [...new Set(peopleDirectory.flatMap(({ person }) => person.emails.map(emailDomain)).filter(Boolean))].sort((a, b) => a.localeCompare(b, "en-US")),
     [peopleDirectory],
   );
-  const editingPerson = peopleDirectory.find(({ person }) => person.id === editingPersonId)?.person ?? null;
-  const editingPersonInvestment = editingPerson ? relationshipForPerson(editingPerson) : null;
-  const activePersonInvestmentDraft =
-    editingPersonInvestment && personInvestmentDraft?.targetKey === `${editingPersonInvestment.companyId ?? "none"}:${editingPersonInvestment.personId ?? "none"}`
-      ? personInvestmentDraft
-      : editingPersonInvestment
-        ? investmentDraftForRelationship(editingPersonInvestment)
-        : null;
+  const personEditor = usePersonEditor({
+    peopleDirectory,
+    updatePersonLocally,
+    queuePendingChange,
+    saveInvestmentRelationship,
+    addInvestmentDealLocally,
+    initialData,
+    setPeopleMessage,
+    personSourceIds,
+  });
   const personMergeTarget = peopleDirectory.find(({ person }) => person.id === personMergeTargetId) ?? null;
   const personMergeCandidates = useMemo(() => {
     if (!personMergeTarget) return [];
@@ -1694,12 +1661,10 @@ export function CrmShell({
     setCompanyDraft({ companyId: "", name: "", websites: "", description: "", country: "" });
     setEnrichmentDraft(null);
     setCompanyInvestmentDraft(null);
-    setPersonInvestmentDraft(null);
     setPipelineDrafts({});
     setEnrichmentMessage(null);
     setTagDrafts({});
     setPeopleMessage(null);
-    setPersonEditMessage(null);
     setIncorrectEmailMessage(null);
     setDebugStorageIssue(null);
     setSyncMessage("Debug draft reset to the latest loaded data.");
@@ -3107,190 +3072,6 @@ export function CrmShell({
     else renameContactTag(summary, nextName);
   }
 
-  function startPersonEdit(person: Person) {
-    setPeopleMessage(null);
-    setPersonEditMessage(null);
-    setEditingPersonId(person.id);
-    setEditDisplayName(person.displayName);
-    setEditFirstName(person.firstName ?? "");
-    setEditLastName(person.lastName ?? "");
-    setEditEmails(person.emails.length > 0 ? [...person.emails] : []);
-    setEditJobTitle(person.jobTitle ?? "");
-    setEditLinkedinUrl(person.linkedinUrl ?? "");
-    setEditPhone(person.phone ?? "");
-    setEditCountry(person.country ?? "");
-    setEditCategories([...person.categories]);
-    setEditCategoryInput("");
-    setPersonInvestmentDraft(investmentDraftForRelationship(relationshipForPerson(person)));
-  }
-
-  function closePersonEdit() {
-    setEditingPersonId(null);
-    setEditDisplayName("");
-    setEditFirstName("");
-    setEditLastName("");
-    setEditEmails([]);
-    setEditJobTitle("");
-    setEditLinkedinUrl("");
-    setEditPhone("");
-    setEditCountry("");
-    setEditCategories([]);
-    setEditCategoryInput("");
-    setPersonInvestmentDraft(null);
-    setPersonEditMessage(null);
-  }
-
-  function updateEditEmail(index: number, value: string) {
-    setEditEmails((current) => current.map((email, emailIndex) => (emailIndex === index ? value : email)));
-  }
-
-  function addEditEmail() {
-    setEditEmails((current) => [...current, ""]);
-  }
-
-  function removeEditEmail(index: number) {
-    setEditEmails((current) => current.filter((_, emailIndex) => emailIndex !== index));
-  }
-
-  function moveEditEmail(index: number, direction: -1 | 1) {
-    setEditEmails((current) => {
-      const nextIndex = index + direction;
-      if (nextIndex < 0 || nextIndex >= current.length) return current;
-      const next = [...current];
-      [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
-      return next;
-    });
-  }
-
-  function addEditCategory() {
-    const nextCategories = normalizePersonCategories([...editCategories, editCategoryInput]);
-    setEditCategories(nextCategories);
-    setEditCategoryInput("");
-  }
-
-  function removeEditCategory(category: string) {
-    setEditCategories((current) => current.filter((item) => item !== category));
-  }
-
-  function saveEditedPerson() {
-    if (!editingPerson) return;
-
-    const displayName = editDisplayName.trim();
-    const firstName = editFirstName.trim() || null;
-    const lastName = editLastName.trim() || null;
-    const emails = normalizePersonEmails(editEmails);
-    const categories = normalizePersonCategories([...editCategories, editCategoryInput]);
-    const jobTitle = editJobTitle.trim() || null;
-    const linkedinUrl = editLinkedinUrl.trim() || null;
-    const phone = editPhone.trim() || null;
-    const countryValue = editCountry.trim() || null;
-    const sourceIds = personSourceIds(editingPerson);
-    const mergeSourceIds = sourceIds.filter((personId) => personId !== editingPerson.id);
-
-    if (!displayName) {
-      setPersonEditMessage("Contact name is required.");
-      return;
-    }
-
-    if (emails.some((email) => !isValidPersonEmail(email))) {
-      setPersonEditMessage("Enter valid email addresses.");
-      return;
-    }
-
-    const updates = { displayName, firstName, lastName, emails, jobTitle, linkedinUrl, phone, country: countryValue, categories };
-    const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
-    const personUpdate = organizationId && isUuid(editingPerson.id)
-      ? {
-          organizationId,
-          personId: editingPerson.id,
-          displayName,
-          firstName,
-          lastName,
-          emails,
-          jobTitle,
-          linkedinUrl,
-          phone,
-          country: countryValue,
-          categories,
-          syncEmails: true,
-        }
-      : undefined;
-
-    updatePersonLocally(sourceIds, updates);
-
-    for (const sourcePersonId of mergeSourceIds) {
-      queuePendingChange({
-        key: `merge:${editingPerson.id}:${sourcePersonId}`,
-        label: "People merge",
-        runBeforePersonBatch: true,
-        record: {
-          kind: "people-merge",
-          key: `merge:${editingPerson.id}:${sourcePersonId}`,
-          label: "People merge",
-          organizationId: organizationId ?? null,
-          targetPersonId: editingPerson.id,
-          sourcePersonId,
-        },
-        run: () =>
-          initialData.authMode === "supabase" && organizationId && isUuid(editingPerson.id) && isUuid(sourcePersonId)
-            ? mergePeopleAction({ organizationId, targetPersonId: editingPerson.id, sourcePersonId })
-            : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-      });
-    }
-
-    queuePendingChange({
-      key: `person:${editingPerson.id}`,
-      label: "Contact update",
-      type: "person",
-      personUpdate,
-      record: {
-        kind: "person",
-        key: `person:${editingPerson.id}`,
-        label: "Contact update",
-        personUpdate: personUpdate ?? {
-          organizationId: "",
-          personId: editingPerson.id,
-          displayName,
-          firstName,
-          lastName,
-          emails,
-          jobTitle,
-          linkedinUrl,
-          phone,
-          country: countryValue,
-          categories,
-          syncEmails: true,
-        },
-      },
-      run: () =>
-        initialData.authMode === "supabase" && organizationId && isUuid(editingPerson.id)
-          ? updatePersonAction({
-            organizationId,
-            personId: editingPerson.id,
-            displayName,
-            firstName,
-            lastName,
-            emails,
-            jobTitle,
-            linkedinUrl,
-            phone,
-            country: countryValue,
-            categories,
-          })
-          : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
-    });
-    if (editingPersonInvestment && personInvestmentDraft) {
-      saveInvestmentRelationship(editingPersonInvestment, personInvestmentDraft, "Contact investment update");
-      if (personInvestmentDraft.dealName.trim()) {
-        addInvestmentDealLocally(editingPersonInvestment, personInvestmentDraft, "Contact investment deal");
-      }
-    }
-    setPeopleMessage(
-      mergeSourceIds.length > 0 ? "Contact merge, update, and investment profile queued locally." : "Contact update queued locally.",
-    );
-    closePersonEdit();
-  }
-
   function addManualNote() {
     if (!activeCompany || !noteText.trim()) return;
     const summary = noteText.trim();
@@ -3462,393 +3243,105 @@ export function CrmShell({
       <main className={clsx("workspace", activeView === "companies" && showCompanyTable && !showDetailPanel && "companies-workspace")}>
         <CrmTopbar activeView={activeView} debugMode={debugMode} toggleDebugMode={toggleDebugMode} resetDebugDraft={resetDebugDraft} isSignedIn={isSignedIn} currentUserName={initialData.currentUserName} />
 
-        {debugMode ? (
-          <div className="debug-banner" aria-live="polite">
-            <FlaskConical size={16} />
-            <span>
-              {debugStorageIssue ?? "Debug mode is on. Edits and queued changes are saved in this browser until you push them to the database."}
-            </span>
-          </div>
-        ) : null}
+        <DebugBanner debugMode={debugMode} debugStorageIssue={debugStorageIssue} />
+        <AuthFlash show={authSuccess && isSignedIn} />
 
-        {authSuccess && isSignedIn ? (
-          <div className="data-notice success auth-flash" aria-live="polite">
-            <Check size={16} />
-            <span>Signed in successfully.</span>
-          </div>
-        ) : null}
-
-        <section className="metrics-grid" aria-label="Import and CRM summary">
-          <Metric label="Raw contacts" value={formatNumber(initialData.importSummary.rawRows)} />
-          <Metric label="Companies" value={formatNumber(initialData.importSummary.normalizedCompanies)} />
-          <Metric label="People" value={formatNumber(initialData.importSummary.normalizedPeople)} />
-          <Metric label="Review queue" value={formatNumber(initialData.importSummary.suspiciousMerges)} tone="warn" />
-        </section>
+        <MetricsGrid importSummary={initialData.importSummary} />
 
         <PipelineStrip pipelineCounts={pipelineCounts} stageFilters={stageFilters} onStageClick={(stage) => { toggleCompanyFilter(setStageFilters, stage); setActiveView("companies"); }} />
 
         {activeView === "companies" ? (
-          <section className={clsx("content-grid", !showCompanyTable && "detail-only", !showDetailPanel && "table-only")}>
-            {showCompanyTable ? (
-            <div className="company-surface">
-            <div className="toolbar">
-              <label className="search-box">
-                <Search size={16} />
-                <input
-                  value={query}
-                  onChange={(event) => {
-                    setCompanyPage(1);
-                    setQuery(event.target.value);
-                  }}
-                  placeholder="Search companies, people, tags, domains"
-                />
-              </label>
-              <button
-                type="button"
-                className="secondary-button table-refresh-button"
-                onClick={refreshCompanyTable}
-                disabled={isRefreshingTable}
-                aria-label="Refresh company table"
-                title="Refresh company table from the database"
-              >
-                <RefreshCw size={15} className={clsx(isRefreshingTable && "spinning")} />
-                {isRefreshingTable ? "Refreshing" : "Refresh"}
-              </button>
-              <MultiFilterSelect
-                icon={<Filter size={15} />}
-                label="Stage"
-                options={OUTREACH_STAGES}
-                selected={stageFilters}
-                onToggle={(value) => toggleCompanyFilter(setStageFilters, value)}
-              />
-              <MultiFilterSelect
-                label="Country"
-                options={countries}
-                selected={countryFilters}
-                onToggle={(value) => toggleCompanyFilter(setCountryFilters, value)}
-              />
-              <MultiFilterSelect
-                label="Tag"
-                options={tagNames}
-                selected={tagFilters}
-                onToggle={(value) => toggleCompanyFilter(setTagFilters, value)}
-              />
-              <MultiFilterSelect
-                label="Quality"
-                options={Object.keys(SOURCE_QUALITY_LABELS)}
-                selected={qualityFilters}
-                onToggle={(value) => toggleCompanyFilter(setQualityFilters, value)}
-                formatOption={(value) => SOURCE_QUALITY_LABELS[value as keyof typeof SOURCE_QUALITY_LABELS] ?? value}
-              />
-              {activeCompanyFilterCount > 0 ? (
-                <button type="button" className="text-button filter-clear-button" onClick={clearCompanyFilters}>
-                  <X size={14} /> Clear filters
-                </button>
-              ) : null}
-            </div>
-
-            <div className="exportbar">
-              <div>
-                <strong>{formatNumber(exportRows.length)} contacts match</strong>
-                <span>Export every linked contact for one criterion, regardless of current page size.</span>
-              </div>
-              <label className="select-filter">
-                <span>Criterion</span>
-                <select
-                  value={exportCriterion}
-                  onChange={(event) => {
-                    const nextCriterion = event.target.value as ContactExportCriterion;
-                    setExportCriterion(nextCriterion);
-                    setExportValue(contactExportValues(companies, nextCriterion)[0] ?? "");
-                  }}
-                >
-                  {Object.entries(CONTACT_EXPORT_LABELS).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown size={14} />
-              </label>
-              <label className="search-box export-value-box">
-                <Search size={16} />
-                <input
-                  list="contact-export-values"
-                  value={exportValue}
-                  onChange={(event) => setExportValue(event.target.value)}
-                  placeholder="Biotech"
-                />
-                <datalist id="contact-export-values">
-                  {exportOptions.map((option) => (
-                    <option key={option} value={option} />
-                  ))}
-                </datalist>
-              </label>
-              <button
-                type="button"
-                className="primary-button"
-                onClick={() => {
-                  const params = new URLSearchParams({ criterion: exportCriterion, value: exportValue });
-                  window.location.href = `/api/export/contacts?${params.toString()}`;
-                }}
-              >
-                <Download size={15} /> Export matched contacts
-              </button>
-            </div>
-
-            <div className="bulkbar">
-              <span>{selectedIds.size} selected</span>
-              <select onChange={(event) => event.target.value && applyStage(event.target.value as OutreachStage)} defaultValue="">
-                <option value="">Move stage</option>
-                {OUTREACH_STAGES.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </select>
-              <label className="bulk-tag">
-                <Tags size={15} />
-                <input value={bulkTag} onChange={(event) => setBulkTag(event.target.value)} placeholder="Add tag" />
-              </label>
-              <button type="button" onClick={applyBulkTag}>
-                <Plus size={15} /> Apply
-              </button>
-              <button type="button" onClick={startCompanyMerge} disabled={selectedCompanies.length < 2} title="Merge selected companies">
-                <GitMerge size={15} /> Merge
-              </button>
-              <button
-                type="button"
-                className={clsx("batch-enrich-button", isBatchEnriching && "running")}
-                style={{ "--batch-progress": `${batchProgressPercent}%` } as React.CSSProperties}
-                onClick={isBatchEnriching ? requestStopEnrichmentBatch : () => enrichCompanyBatch(batchTargetCompanies)}
-                disabled={!isBatchEnriching && (isEnriching || !initialData.localEnrichmentEnabled || !isSignedIn || batchTargetCompanies.length === 0)}
-                title="Generate local LLM enrichments for selected companies, or all filtered companies if nothing is selected"
-                aria-label={isBatchEnriching ? "Stop enrichment batch" : "Start enrichment batch"}
-              >
-                <span className="batch-enrich-progress" aria-hidden="true" />
-                <FlaskConical size={15} />
-                {isBatchEnriching
-                  ? batchProgress?.stopRequested
-                    ? "Stopping..."
-                    : `Stop ${formatNumber(batchProgressProcessed)} / ${formatNumber(batchProgress?.total ?? 0)}`
-                  : `Enrich ${formatNumber(batchTargetCompanies.length)}`}
-              </button>
-              <button type="button" onClick={() => exportCompanies(selectedCompanies.length ? selectedCompanies : filteredCompanies)}>
-                <Download size={15} /> Export
-              </button>
-              {pendingChanges.length > 0 ? <span className="saving">{formatChangeCount(pendingChanges.length)}</span> : null}
-            </div>
-
-            {batchProgress ? (
-              <div className="batch-progress-panel" aria-live="polite">
-                <div>
-                  <strong>{batchProgress.stopped ? "Batch stopped" : isBatchEnriching ? "Batch enriching" : "Batch complete"}</strong>
-                  <span>
-                    {formatNumber(batchProgress.completed)} queued
-                    {batchProgress.skipped ? `, ${formatNumber(batchProgress.skipped)} skipped` : ""}
-                    {batchProgress.failed ? `, ${formatNumber(batchProgress.failed)} failed` : ""}
-                    {" "}of {formatNumber(batchProgress.total)}
-                    {batchProgress.currentName ? ` • ${batchProgress.currentName}` : ""}
-                  </span>
-                </div>
-                <progress value={batchProgressProcessed} max={batchProgress.total} />
-                {!isBatchEnriching && pendingEnrichmentCount > 0 ? (
-                  <button type="button" className="secondary-button" onClick={pushPendingEnrichments} disabled={isPushingChanges}>
-                    <Upload size={15} /> {isPushingChanges ? "Pushing..." : `Push ${formatNumber(pendingEnrichmentCount)} enrichment${pendingEnrichmentCount === 1 ? "" : "s"}`}
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-
-            {companyMergeTarget ? (
-              <div className="people-merge-panel company-merge-panel">
-                <div className="people-merge-header">
-                  <div>
-                    <strong>Merge {selectedCompanies.length} selected companies</strong>
-                    <span>Choose the keeper. Websites, people, tags, activity, notes, tasks, and outreach history will move onto it.</span>
-                  </div>
-                  <button type="button" className="secondary-button" onClick={closeCompanyMerge}>
-                    Cancel
-                  </button>
-                </div>
-                <div className="people-merge-list">
-                  {selectedCompanies.map((company) => (
-                    <article key={company.id} className="merge-candidate-row company-merge-row">
-                      <label className="merge-keeper-option">
-                        <input
-                          type="radio"
-                          checked={companyMergeTarget.id === company.id}
-                          onChange={() => setCompanyMergeTargetId(company.id)}
-                          aria-label={`Keep ${company.name}`}
-                        />
-                        <span>
-                          <strong>{company.name}</strong>
-                          {formatCompanyWebsites(company)} • {company.people.length} people • {company.activities.length} activities
-                        </span>
-                      </label>
-                      <div className="tag-list">
-                        {company.tags.slice(0, 3).map((item) => (
-                          <span key={item.id} className="tag-chip" style={{ "--tag-color": item.color } as React.CSSProperties}>
-                            {item.name}
-                          </span>
-                        ))}
-                        {company.tags.length > 3 ? <span className="email-more">+{company.tags.length - 3}</span> : null}
-                      </div>
-                    </article>
-                  ))}
-                </div>
-                <div className="company-merge-actions">
-                  <button type="button" className="primary-button" onClick={handleCompanyMerge} disabled={companyMergeSources.length === 0}>
-                    <GitMerge size={15} /> Queue merge
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            <div className="company-table-wrap">
-              <table className="company-table">
-                <colgroup>
-                  <col className="select-column" />
-                  <col className="company-column" />
-                  <col className="stage-column" />
-                  <col className="tags-column" />
-                  <col className="people-column" />
-                  <col className="quality-column" />
-                  <col className="task-column" />
-                  <col className="activity-column" />
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th aria-label="Select" />
-                    <th>Company</th>
-                    <th>Stage</th>
-                    <th>Tags</th>
-                    <th>People</th>
-                    <th>Quality</th>
-                    <th>Next task</th>
-                    <th>Last touch</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleCompanies.map((company) => (
-                    <tr
-                      key={company.id}
-                      className={clsx(activeCompany?.id === company.id && "active-row")}
-                      onClick={() => setActiveCompanyId(company.id)}
-                      onDoubleClick={() => openCompanyModal(company.id)}
-                    >
-                      <td>
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.has(company.id)}
-                          onChange={(event) => {
-                            event.stopPropagation();
-                            toggleCompany(company.id);
-                          }}
-                          aria-label={`Select ${company.name}`}
-                        />
-                      </td>
-                      <td>
-                        <div className="company-cell">
-                          <strong>{company.name}</strong>
-                          <span title={company.websiteDomains.join(", ")}>{formatCompanyWebsites(company)}</span>
-                        </div>
-                      </td>
-                      <td>
-                        <span className="stage-badge">{company.outreachStage}</span>
-                      </td>
-                      <td>
-                        <div className="tag-list">
-                          {company.tags.slice(0, 3).map((item) => (
-                            <span key={item.id} className="tag-chip" style={{ "--tag-color": item.color } as React.CSSProperties}>
-                              {item.name}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td>{company.people.length}</td>
-                      <td>
-                        <span className={clsx("quality-pill", company.sourceQuality)}>{SOURCE_QUALITY_LABELS[company.sourceQuality]}</span>
-                      </td>
-                      <td className="muted-cell">{company.nextTask?.title ?? "No open task"}</td>
-                      <td className="muted-cell">{formatDate(company.lastActivityAt)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="company-countbar">
-              <span>
-                Showing {formatNumber(companyStart)}-{formatNumber(companyEnd)} of {formatNumber(filteredCompanies.length)}
-              </span>
-              <div className="people-pager">
-                <label className="select-filter">
-                  <span>Show</span>
-                  <select
-                    value={String(companyPageSize)}
-                    onChange={(event) => {
-                      const nextValue = event.target.value;
-                      setCompanyPage(1);
-                      setCompanyPageSize(nextValue === "all" ? "all" : (Number(nextValue) as CompanyPageSize));
-                    }}
-                  >
-                    {COMPANY_PAGE_SIZE_OPTIONS.map((option) => (
-                      <option key={String(option)} value={String(option)}>
-                        {option === "all" ? "All" : option}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown size={14} />
-                </label>
-                <button type="button" className="pager-button" disabled={effectiveCompanyPage <= 1 || companyPageSize === "all"} onClick={() => setCompanyPage((current) => Math.max(1, current - 1))}>
-                  Previous
-                </button>
-                <span>
-                  Page {formatNumber(effectiveCompanyPage)} / {formatNumber(companyTotalPages)}
-                </span>
-                <button
-                  type="button"
-                  className="pager-button"
-                  disabled={effectiveCompanyPage >= companyTotalPages || companyPageSize === "all"}
-                  onClick={() => setCompanyPage((current) => Math.min(companyTotalPages, current + 1))}
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-            </div>
-            ) : null}
-
-          {activeCompany && (showDetailPanel || companyModalId) ? (
-          <CompanyDetailPanel
+          <CompaniesView
+            showCompanyTable={showCompanyTable}
             activeCompany={activeCompany}
             showDetailPanel={showDetailPanel}
             companyModalId={companyModalId}
-            activeCompanyDraft={activeCompanyDraft}
-            setCompanyDraft={setCompanyDraft}
-            updateActiveCompany={updateActiveCompany}
-            closeCompanyModal={closeCompanyModal}
-            activeCompanyEnrichmentDraft={activeCompanyEnrichmentDraft}
-            setEnrichmentDraft={setEnrichmentDraft}
-            enrichmentMessage={enrichmentMessage}
+            filteredCompanies={filteredCompanies}
+            visibleCompanies={visibleCompanies}
+            selectedIds={selectedIds}
+            query={query}
+            stageFilters={stageFilters}
+            countryFilters={countryFilters}
+            tagFilters={tagFilters}
+            qualityFilters={qualityFilters}
+            exportCriterion={exportCriterion}
+            exportValue={exportValue}
+            companyPageSize={companyPageSize}
+            effectiveCompanyPage={effectiveCompanyPage}
+            companyTotalPages={companyTotalPages}
+            companyStart={companyStart}
+            companyEnd={companyEnd}
+            activeCompanyFilterCount={activeCompanyFilterCount}
+            batchTargetCompanies={batchTargetCompanies}
+            isBatchEnriching={isBatchEnriching}
+            batchProgress={batchProgress}
+            batchProgressPercent={batchProgressPercent}
+            batchProgressProcessed={batchProgressProcessed}
+            pendingEnrichmentCount={pendingEnrichmentCount}
+            isRefreshingTable={isRefreshingTable}
             isEnriching={isEnriching}
-            localEnrichmentEnabled={initialData.localEnrichmentEnabled}
+            isPushingChanges={isPushingChanges}
             isSignedIn={isSignedIn}
-            enrichActiveCompany={enrichActiveCompany}
-            saveActiveCompanyEnrichment={saveActiveCompanyEnrichment}
+            pendingChangesLength={pendingChanges.length}
+            selectedCompanies={selectedCompanies}
+            companyMergeTarget={companyMergeTarget}
+            companyMergeSources={companyMergeSources}
+            activeCompanyDraft={activeCompanyDraft}
+            activeCompanyEnrichmentDraft={activeCompanyEnrichmentDraft}
             activeCompanyInvestment={activeCompanyInvestment}
             activeCompanyInvestmentDraft={activeCompanyInvestmentDraft}
-            setCompanyInvestmentDraft={setCompanyInvestmentDraft}
-            saveInvestmentRelationship={saveInvestmentRelationship}
-            addInvestmentDealLocally={addInvestmentDealLocally}
-            toggleHighlight={toggleHighlight}
-            startPersonEdit={startPersonEdit}
+            enrichmentMessage={enrichmentMessage}
+            setEnrichmentDraft={setEnrichmentDraft}
+            setCompanyDraft={setCompanyDraft}
             noteText={noteText}
             setNoteText={setNoteText}
-            addManualNote={addManualNote}
+            localEnrichmentEnabled={initialData.localEnrichmentEnabled}
+            exportOptions={exportOptions}
+            exportRowsLength={exportRows.length}
+            countries={countries}
+            tagNames={tagNames}
+            bulkTag={bulkTag}
+            companyPageSizeOptions={COMPANY_PAGE_SIZE_OPTIONS}
+            onSetQuery={setQuery}
+            onSetCompanyPage={setCompanyPage}
+            onSetCompanyPageSize={(size) => setCompanyPageSize(size as 50 | 100 | 250 | 500 | "all")}
+            onSetExportCriterion={setExportCriterion}
+            onSetExportValue={setExportValue}
+            onSetBulkTag={setBulkTag}
+            onToggleCompany={toggleCompany}
+            onToggleStageFilter={(value) => toggleCompanyFilter(setStageFilters, value)}
+            onToggleCountryFilter={(value) => toggleCompanyFilter(setCountryFilters, value)}
+            onToggleTagFilter={(value) => toggleCompanyFilter(setTagFilters, value)}
+            onToggleQualityFilter={(value) => toggleCompanyFilter(setQualityFilters, value)}
+            onClearCompanyFilters={clearCompanyFilters}
+            onRefreshCompanyTable={refreshCompanyTable}
+            onApplyStage={applyStage}
+            onApplyBulkTag={applyBulkTag}
+            onStartCompanyMerge={startCompanyMerge}
+            onCloseCompanyMerge={closeCompanyMerge}
+            onSetCompanyMergeTargetId={setCompanyMergeTargetId}
+            onHandleCompanyMerge={handleCompanyMerge}
+            onEnrichCompanyBatch={enrichCompanyBatch}
+            onRequestStopEnrichmentBatch={requestStopEnrichmentBatch}
+            onExportCompanies={exportCompanies}
+            onOpenCompanyModal={openCompanyModal}
+            onSetActiveCompanyId={setActiveCompanyId}
+            onExportCriterionChange={(nextCriterion) => {
+              setExportCriterion(nextCriterion);
+              setExportValue(contactExportValues(companies, nextCriterion)[0] ?? "");
+            }}
+            onCloseCompanyModal={closeCompanyModal}
+            onUpdateActiveCompany={updateActiveCompany}
+            onEnrichActiveCompany={enrichActiveCompany}
+            onSaveActiveCompanyEnrichment={saveActiveCompanyEnrichment}
+            onSaveInvestmentRelationship={saveInvestmentRelationship}
+            onAddInvestmentDealLocally={addInvestmentDealLocally}
+            onToggleHighlight={toggleHighlight}
+            onAddManualNote={addManualNote}
+            onSetCompanyInvestmentDraft={setCompanyInvestmentDraft}
+            startPersonEdit={personEditor.startPersonEdit}
+            pushPendingEnrichments={pushPendingEnrichments}
           />
-          ) : null}
-          </section>
         ) : null}
 
         {activeView === "people" ? (
@@ -3898,7 +3391,7 @@ export function CrmShell({
             onStopSplitNames={() => { stopBatchRef.current = true; }}
             onSetActiveCompany={setActiveCompanyId}
             onToggleHighlight={toggleHighlight}
-            onStartEdit={startPersonEdit}
+            onStartEdit={personEditor.startPersonEdit}
             onOpenCompany={openCompany}
             onStartManualMerge={startManualMerge}
           />
@@ -3991,40 +3484,7 @@ export function CrmShell({
           onClose={closeAccountingRecordActionDialog}
         />
 
-        <ContactEditor
-          editingPerson={editingPerson}
-          editDisplayName={editDisplayName}
-          setEditDisplayName={setEditDisplayName}
-          editFirstName={editFirstName}
-          setEditFirstName={setEditFirstName}
-          editLastName={editLastName}
-          setEditLastName={setEditLastName}
-          editJobTitle={editJobTitle}
-          setEditJobTitle={setEditJobTitle}
-          editLinkedinUrl={editLinkedinUrl}
-          setEditLinkedinUrl={setEditLinkedinUrl}
-          editPhone={editPhone}
-          setEditPhone={setEditPhone}
-          editCountry={editCountry}
-          setEditCountry={setEditCountry}
-          editEmails={editEmails}
-          editCategoryInput={editCategoryInput}
-          setEditCategoryInput={setEditCategoryInput}
-          editCategories={editCategories}
-          editingPersonInvestment={editingPersonInvestment}
-          activePersonInvestmentDraft={activePersonInvestmentDraft}
-          personEditMessage={personEditMessage}
-          isPushingChanges={isPushingChanges}
-          onSave={saveEditedPerson}
-          onClose={closePersonEdit}
-          onUpdateEmail={updateEditEmail}
-          onAddEmail={addEditEmail}
-          onRemoveEmail={removeEditEmail}
-          onMoveEmail={moveEditEmail}
-          onAddCategory={addEditCategory}
-          onRemoveCategory={removeEditCategory}
-          onSetPersonInvestmentDraft={setPersonInvestmentDraft}
-        />
+        <ContactEditor editor={personEditor} isPushingChanges={isPushingChanges} />
       </main>
     </div>
   );
