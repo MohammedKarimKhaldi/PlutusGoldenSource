@@ -6,7 +6,7 @@ import clsx from "clsx";
 
 import { contactExportValues, filterContactExportRows } from "@/lib/export/contacts";
 import { COMPANY_PAGE_SIZE_OPTIONS, INCORRECT_EMAIL_TAG, emptyAccountingData, exportCompanies, exportDealPipeline, exportPeople, enrichmentDraftForCompany, initialCompanyIdFor, investmentDraftForRelationship, personSourceIds, relationshipForCompany } from "@/lib/crm-utils";
-import { FundraisingView } from "@/components/fundraising-view";
+import { FundraisingView } from "@/components/views/fundraising/fundraising-view";
 import { Sidebar } from "@/components/views/shell/sidebar";
 import { CrmTopbar } from "@/components/views/shell/crm-topbar";
 import { PipelineStrip } from "@/components/views/pipeline/pipeline-strip";
