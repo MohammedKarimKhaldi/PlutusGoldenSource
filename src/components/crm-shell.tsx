@@ -6,6 +6,7 @@ import clsx from "clsx";
 
 import { contactExportValues, filterContactExportRows } from "@/lib/export/contacts";
 import { COMPANY_PAGE_SIZE_OPTIONS, INCORRECT_EMAIL_TAG, emptyAccountingData, exportCompanies, exportDealPipeline, exportPeople, enrichmentDraftForCompany, initialCompanyIdFor, investmentDraftForRelationship, personSourceIds, relationshipForCompany } from "@/lib/crm-utils";
+import { buildFundraisingCompanyProfile } from "@/lib/fundraising-company-profile";
 import { FundraisingView } from "@/components/views/fundraising/fundraising-view";
 import { Sidebar } from "@/components/views/shell/sidebar";
 import { CrmTopbar } from "@/components/views/shell/crm-topbar";
@@ -38,6 +39,7 @@ export function CrmShell({
   initialData,
   authSuccess = false,
   companyId,
+  fundraisingClientId,
   hideDetailPanel = false,
   hideTable = false,
   activeView: initialActiveView = "companies",
@@ -51,7 +53,7 @@ export function CrmShell({
 
   const {
     pendingChanges, setPendingChanges, isPushingChanges, syncMessage, setSyncMessage,
-    buildPendingChange, queuePendingChange, pushPendingChanges, pushPendingEnrichments, queuePersonUpdate,
+    buildPendingChange, queuePendingChange, queuePendingRecord, discardPendingChange, pushPendingChanges, pushPendingEnrichments, queuePersonUpdate,
   } = usePendingChanges(initialData);
 
   const [accountingData, setAccountingData] = useState(() => initialData.accounting ?? emptyAccountingData());
@@ -234,6 +236,8 @@ export function CrmShell({
     companies,
     companyNameById,
     setActiveView,
+    queuePendingRecord,
+    discardPendingChange,
   });
 
   const showCompanyTable = !hideTable;
@@ -249,6 +253,28 @@ export function CrmShell({
       : activeCompanyInvestment
         ? investmentDraftForRelationship(activeCompanyInvestment)
         : null;
+
+  const fundraisingCompanyProfile = useMemo(
+    () =>
+      activeCompany
+        ? buildFundraisingCompanyProfile({
+            company: activeCompany,
+            clientDashboard: initialData.clientDashboard,
+            accountingData: initialData.accountingAccess.canView ? accountingData : null,
+            selectedClientId: fundraisingClientId,
+          })
+        : null,
+    [accountingData, activeCompany, fundraisingClientId, initialData.accountingAccess.canView, initialData.clientDashboard],
+  );
+
+  function openFundraisingCompanyPage(nextCompanyId: string, clientId: string) {
+    router.push(`/companies/${encodeURIComponent(nextCompanyId)}?client=${encodeURIComponent(clientId)}`);
+  }
+
+  function selectFundraisingClientForCompany(clientId: string) {
+    if (!activeCompany) return;
+    openFundraisingCompanyPage(activeCompany.id, clientId);
+  }
 
   const pendingEnrichmentCount = pendingChanges.filter((change) => change.record.kind === "company-enrichment-update").length;
 
@@ -337,6 +363,8 @@ export function CrmShell({
             activeCompanyEnrichmentDraft={activeCompanyEnrichmentDraft}
             activeCompanyInvestment={activeCompanyInvestment}
             activeCompanyInvestmentDraft={activeCompanyInvestmentDraft}
+            fundraisingCompanyProfile={fundraisingCompanyProfile}
+            accountingCanView={initialData.accountingAccess.canView}
             enrichmentMessage={enrichmentMessage}
             setEnrichmentDraft={setEnrichmentDraft}
             setCompanyDraft={setCompanyDraft}
@@ -382,6 +410,7 @@ export function CrmShell({
             onAddInvestmentDealLocally={addInvestmentDealLocally}
             onToggleHighlight={toggleHighlight}
             onAddManualNote={addManualNote}
+            onSelectFundraisingClient={selectFundraisingClientForCompany}
             onSetCompanyInvestmentDraft={setCompanyInvestmentDraft}
             startPersonEdit={personEditor.startPersonEdit}
             pushPendingEnrichments={pushPendingEnrichments}
@@ -465,9 +494,12 @@ export function CrmShell({
             dataMode={initialData.dataMode}
             currentUserName={initialData.currentUserName}
             onOpenCompany={openCompany}
+            onOpenCompanyPage={openFundraisingCompanyPage}
             onOpenAccounting={openAccountingForFundraisingCompany}
             onAddCreatedCompany={addCreatedCompanyLocally}
             onAddCreatedPerson={addCreatedPersonLocally}
+            queuePendingRecord={queuePendingRecord}
+            discardPendingChange={discardPendingChange}
           />
         ) : null}
 

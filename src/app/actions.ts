@@ -10,6 +10,7 @@ import { clearDashboardDataCache } from "@/lib/data";
 import { applyCompanyEnrichmentTags } from "@/lib/enrichment/company-tags";
 import { normalizeCompanyName, normalizePersonName } from "@/lib/import/normalization";
 import { buildPersonEmailUpdateRows, isValidPersonEmail, normalizePersonCategories } from "@/lib/person-update";
+import { buildRetainerForecastDates, RETAINER_CADENCE_LABELS } from "@/lib/retainer-forecast";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 import type { AccountingDocument, AccountingLedgerEntry, AccountingRole, FundraisingClient, FundraisingClientTarget, InvestmentDealStatus } from "@/lib/types";
 import {
@@ -141,6 +142,8 @@ type AccountingMemberRow = {
 type AccountingDocumentRow = {
   id: string;
   company_id: string | null;
+  fundraising_client_id: string | null;
+  retainer_period_date: string | null;
   document_type: AccountingDocument["documentType"];
   status: AccountingDocument["status"];
   title: string;
@@ -201,6 +204,9 @@ type FundraisingClientRow = {
   target_raise_currency: string | null;
   retainer_amount_minor: number | null;
   retainer_currency: string | null;
+  retainer_cadence: FundraisingClient["retainerCadence"];
+  retainer_schedule: string | null;
+  retainer_next_billing_date: string | null;
   materials_url: string | null;
   data_room_url: string | null;
   notes: string | null;
@@ -246,11 +252,11 @@ const INVESTMENT_DEAL_STATUS_LABELS: Record<InvestmentDealStatus, string> = {
   passed: "Passed",
 };
 const ACCOUNTING_DOCUMENT_COLUMNS =
-  "id,company_id,document_type,status,title,amount_minor,currency,issued_on,due_on,external_reference,document_url,notes,created_by,updated_by,voided_at,voided_by,void_reason,created_at,updated_at";
+  "id,company_id,fundraising_client_id,retainer_period_date,document_type,status,title,amount_minor,currency,issued_on,due_on,external_reference,document_url,notes,created_by,updated_by,voided_at,voided_by,void_reason,created_at,updated_at";
 const ACCOUNTING_LEDGER_COLUMNS =
   "id,document_id,company_id,entry_type,direction,amount_minor,currency,occurred_on,external_reference,document_url,notes,created_by,updated_by,voided_at,voided_by,void_reason,created_at,updated_at";
 const FUNDRAISING_CLIENT_COLUMNS =
-  "id,company_id,mandate_name,stage,owner_id,primary_contact_person_id,signed_on,target_raise_amount_minor,target_raise_currency,retainer_amount_minor,retainer_currency,materials_url,data_room_url,notes,created_by,updated_by,created_at,updated_at";
+  "id,company_id,mandate_name,stage,owner_id,primary_contact_person_id,signed_on,target_raise_amount_minor,target_raise_currency,retainer_amount_minor,retainer_currency,retainer_cadence,retainer_schedule,retainer_next_billing_date,materials_url,data_room_url,notes,created_by,updated_by,created_at,updated_at";
 const FUNDRAISING_TARGET_COLUMNS =
   "id,client_id,investor_company_id,investor_person_id,investor_name,investor_email,investor_type,ticket_size_min_minor,ticket_size_max_minor,ticket_size_currency,stage,owner_id,last_contacted_at,next_step,notes,created_by,updated_by,created_at,updated_at";
 
@@ -274,6 +280,8 @@ function mapAccountingDocument(row: AccountingDocumentRow): AccountingDocument {
   return {
     id: row.id,
     companyId: row.company_id,
+    fundraisingClientId: row.fundraising_client_id ?? null,
+    retainerPeriodDate: row.retainer_period_date ?? null,
     documentType: row.document_type,
     status: row.status,
     title: row.title,
@@ -330,6 +338,9 @@ function mapFundraisingClient(row: FundraisingClientRow): FundraisingClient {
     targetRaiseCurrency: row.target_raise_currency,
     retainerAmountMinor: row.retainer_amount_minor == null ? null : Number(row.retainer_amount_minor),
     retainerCurrency: row.retainer_currency,
+    retainerCadence: row.retainer_cadence ?? null,
+    retainerSchedule: row.retainer_schedule ?? null,
+    retainerNextBillingDate: row.retainer_next_billing_date ?? null,
     materialsUrl: row.materials_url,
     dataRoomUrl: row.data_room_url,
     notes: row.notes,
@@ -447,7 +458,7 @@ async function insertAccountingAuditEvent({
   beforeData,
   afterData,
 }: {
-  supabase: SupabaseServerClient;
+  supabase: SupabaseWriteClient;
   organizationId: string;
   userId: string;
   action: "create" | "update" | "void" | "delete";
@@ -624,6 +635,97 @@ async function createFundraisingPerson({
   return { personId, message: null };
 }
 
+async function syncRetainerForecastDocuments({
+  supabase,
+  organizationId,
+  userId,
+  client,
+}: {
+  supabase: SupabaseWriteClient;
+  organizationId: string;
+  userId: string;
+  client: FundraisingClient;
+}) {
+  const { data: existingRows, error: existingError } = await supabase
+    .from("accounting_documents")
+    .select(ACCOUNTING_DOCUMENT_COLUMNS)
+    .eq("organization_id", organizationId)
+    .eq("fundraising_client_id", client.id);
+
+  if (existingError) return existingError.message;
+
+  const existingDocuments = ((existingRows ?? []) as AccountingDocumentRow[]).filter((document) => document.document_type === "retainer");
+  const hasRetainerSchedule = Boolean(
+    client.retainerAmountMinor != null &&
+    client.retainerCurrency &&
+    client.retainerCadence &&
+    client.retainerNextBillingDate,
+  );
+  const expectedDates = hasRetainerSchedule
+    ? buildRetainerForecastDates(client.retainerNextBillingDate as string, client.retainerCadence as NonNullable<FundraisingClient["retainerCadence"]>)
+    : [];
+  const expectedDateSet = new Set(expectedDates);
+  const now = new Date().toISOString();
+
+  for (const periodDate of expectedDates) {
+    const existing = existingDocuments.find((document) => document.retainer_period_date === periodDate);
+    if (existing && (existing.status !== "draft" || existing.voided_at)) continue;
+
+    const row = {
+      organization_id: organizationId,
+      company_id: client.companyId,
+      fundraising_client_id: client.id,
+      retainer_period_date: periodDate,
+      document_type: "retainer",
+      status: "draft",
+      title: `Retainer — ${client.mandateName} — ${periodDate}`,
+      amount_minor: client.retainerAmountMinor,
+      currency: client.retainerCurrency,
+      issued_on: periodDate,
+      due_on: periodDate,
+      external_reference: `fundraising-retainer:${client.id}:${periodDate}`,
+      document_url: null,
+      notes: client.retainerSchedule ?? RETAINER_CADENCE_LABELS[client.retainerCadence as NonNullable<FundraisingClient["retainerCadence"]>],
+      updated_by: userId,
+      updated_at: now,
+    };
+
+    if (existing) {
+      const { error } = await supabase
+        .from("accounting_documents")
+        .update(row)
+        .eq("organization_id", organizationId)
+        .eq("id", existing.id);
+      if (error) return error.message;
+    } else {
+      const { error } = await supabase.from("accounting_documents").insert({ ...row, created_by: userId });
+      if (error) return error.message;
+    }
+  }
+
+  for (const document of existingDocuments) {
+    if (!document.retainer_period_date || expectedDateSet.has(document.retainer_period_date)) continue;
+    if (document.status !== "draft" || document.voided_at) continue;
+    if (!document.external_reference?.startsWith(`fundraising-retainer:${client.id}:`)) continue;
+
+    const { error } = await supabase
+      .from("accounting_documents")
+      .update({
+        status: "void",
+        voided_at: now,
+        voided_by: userId,
+        void_reason: "Retainer forecast no longer matches the fundraising client schedule.",
+        updated_by: userId,
+        updated_at: now,
+      })
+      .eq("organization_id", organizationId)
+      .eq("id", document.id);
+    if (error) return error.message;
+  }
+
+  return null;
+}
+
 export async function refreshDashboardAction(): Promise<ActionResult> {
   await revalidateDashboard();
   return { ok: true, message: "Dashboard cache refreshed." };
@@ -682,6 +784,13 @@ export async function saveFundraisingClientAction(input: unknown): Promise<Fundr
     target_raise_currency: parsed.data.targetRaiseCurrency ?? null,
     retainer_amount_minor: parsed.data.retainerAmountMinor ?? null,
     retainer_currency: parsed.data.retainerCurrency ?? null,
+    retainer_cadence: parsed.data.retainerAmountMinor == null ? null : parsed.data.retainerCadence ?? null,
+    retainer_schedule: parsed.data.retainerAmountMinor == null
+      ? null
+      : parsed.data.retainerCadence
+        ? RETAINER_CADENCE_LABELS[parsed.data.retainerCadence]
+        : parsed.data.retainerSchedule ?? null,
+    retainer_next_billing_date: parsed.data.retainerAmountMinor == null ? null : parsed.data.retainerNextBillingDate ?? null,
     materials_url: parsed.data.materialsUrl ?? null,
     data_room_url: parsed.data.dataRoomUrl ?? null,
     notes: parsed.data.notes ?? null,
@@ -709,40 +818,22 @@ export async function saveFundraisingClientAction(input: unknown): Promise<Fundr
   if (error) return { ok: false, message: error.message };
   if (!data) return { ok: false, message: "Could not save this fundraising client." };
 
-  if (isNewClient && parsed.data.retainerAmountMinor != null && companyId) {
-    const docResult = await supabase.from("accounting_documents").insert({
-      organization_id: parsed.data.organizationId,
-      company_id: companyId,
-      document_type: "retainer",
-      status: "open",
-      title: `Retainer — ${parsed.data.mandateName}`,
-      amount_minor: parsed.data.retainerAmountMinor,
-      currency: parsed.data.retainerCurrency,
-      created_by: membership.userId,
-      updated_by: membership.userId,
-    }).select("id").single();
-
-    if (!docResult.error && docResult.data) {
-      await supabase.from("accounting_ledger_entries").insert({
-        organization_id: parsed.data.organizationId,
-        document_id: docResult.data.id,
-        company_id: companyId,
-        entry_type: "retainer_payment",
-        direction: "incoming",
-        amount_minor: parsed.data.retainerAmountMinor,
-        currency: parsed.data.retainerCurrency,
-        occurred_on: new Date().toISOString().slice(0, 10),
-        created_by: membership.userId,
-        updated_by: membership.userId,
-      });
-    }
-  }
+  const client = mapFundraisingClient(data as FundraisingClientRow);
+  const accountingClient = createSupabaseAdminClient() ?? supabase;
+  const retainerSyncError = await syncRetainerForecastDocuments({
+    supabase: accountingClient,
+    organizationId: parsed.data.organizationId,
+    userId: membership.userId,
+    client,
+  });
 
   await revalidateDashboard();
   return {
     ok: true,
-    message: isNewClient ? "Fundraising client created." : "Fundraising client saved.",
-    client: mapFundraisingClient(data as FundraisingClientRow),
+    message: retainerSyncError
+      ? `${isNewClient ? "Fundraising client created" : "Fundraising client saved"}, but retainer invoices could not be synced: ${retainerSyncError}`
+      : isNewClient ? "Fundraising client created." : "Fundraising client saved.",
+    client,
   };
 }
 

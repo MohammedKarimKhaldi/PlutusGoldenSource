@@ -1,17 +1,24 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import {
   addActivityAction,
   addCompanyTagAction,
   addInvestmentDealAction,
   deleteAccountingRecordAction,
+  deleteFundraisingClientAction,
+  deleteFundraisingTargetAction,
   highlightPersonAction,
   mergeCompaniesAction,
   mergePeopleAction,
   moveStageAction,
   renameCompanyTagAction,
+  saveAccountingDocumentAction,
+  saveAccountingLedgerEntryAction,
+  saveFundraisingClientAction,
+  saveFundraisingTargetAction,
   updateCompanyAction,
   updateCompanyEnrichmentAction,
   updateInvestmentDealStatusAction,
@@ -30,22 +37,25 @@ import {
   PUSH_BATCH_SIZE,
   chunkItems,
   isPendingPersonChange,
-  isPendingChangeRecord,
-  mergePendingPersonUpdate,
   personSourceIds,
 } from "@/lib/crm-utils";
+import {
+  createPendingPushContext,
+  resolvePendingPayloadIds,
+  upsertOnePendingChange,
+} from "@/lib/pending-changes";
 import type {
-  ActionResult,
   PendingChange,
   PendingChangeRecord,
-  PendingPersonUpdate,
 } from "@/lib/crm-types";
 import type { Person } from "@/lib/types";
 
 export function usePendingChanges(initialData: DashboardData) {
+  const router = useRouter();
   const [pendingChanges, setPendingChanges] = useState<PendingChange[]>([]);
   const [isPushingChanges, setIsPushingChanges] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const pendingIdResolutionsRef = useRef(new Map<string, string>());
 
   const buildPendingChange = useCallback((record: PendingChangeRecord): PendingChange => {
     switch (record.kind) {
@@ -200,40 +210,134 @@ export function usePendingChanges(initialData: DashboardData) {
                 })
               : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
         };
+      case "accounting-document-save":
+        return {
+          key: record.key,
+          label: record.label,
+          record,
+          run: async (context) => {
+            if (initialData.authMode !== "supabase") {
+              return { ok: false, message: "Sign in with Supabase configured before pushing changes." };
+            }
+            const result = await saveAccountingDocumentAction(
+              resolvePendingPayloadIds(record.payload, context, ["documentId", "companyId"]),
+            );
+            if (result.ok && result.document) context.rememberId(record.localId, result.document.id);
+            return result;
+          },
+        };
+      case "accounting-ledger-entry-save":
+        return {
+          key: record.key,
+          label: record.label,
+          record,
+          run: async (context) => {
+            if (initialData.authMode !== "supabase") {
+              return { ok: false, message: "Sign in with Supabase configured before pushing changes." };
+            }
+            const result = await saveAccountingLedgerEntryAction(
+              resolvePendingPayloadIds(record.payload, context, ["entryId", "documentId", "companyId"]),
+            );
+            if (result.ok && result.entry) context.rememberId(record.localId, result.entry.id);
+            return result;
+          },
+        };
+      case "accounting-record-action":
+        return {
+          key: record.key,
+          label: record.label,
+          record,
+          run: (context) =>
+            initialData.authMode === "supabase"
+              ? record.action === "delete"
+                ? deleteAccountingRecordAction({
+                    organizationId: process.env.NEXT_PUBLIC_DEFAULT_ORG_ID,
+                    entityType: record.entityType,
+                    id: context.resolveId(record.id),
+                    reason: record.reason,
+                  })
+                : voidAccountingRecordAction({
+                    organizationId: process.env.NEXT_PUBLIC_DEFAULT_ORG_ID,
+                    entityType: record.entityType,
+                    id: context.resolveId(record.id),
+                    reason: record.reason,
+                  })
+              : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
+        };
+      case "fundraising-client-save":
+        return {
+          key: record.key,
+          label: record.label,
+          record,
+          run: async (context) => {
+            if (initialData.authMode !== "supabase") {
+              return { ok: false, message: "Sign in with Supabase configured before pushing changes." };
+            }
+            const result = await saveFundraisingClientAction(
+              resolvePendingPayloadIds(record.payload, context, ["clientId", "companyId", "primaryContactPersonId"]),
+            );
+            if (result.ok && result.client) {
+              context.rememberId(record.localId, result.client.id);
+              context.rememberId(record.localCompanyId, result.client.companyId);
+              context.rememberId(record.localPrimaryContactPersonId, result.client.primaryContactPersonId);
+            }
+            return result;
+          },
+        };
+      case "fundraising-target-save":
+        return {
+          key: record.key,
+          label: record.label,
+          record,
+          run: async (context) => {
+            if (initialData.authMode !== "supabase") {
+              return { ok: false, message: "Sign in with Supabase configured before pushing changes." };
+            }
+            const result = await saveFundraisingTargetAction(
+              resolvePendingPayloadIds(record.payload, context, ["targetId", "clientId", "investorCompanyId", "investorPersonId"]),
+            );
+            if (result.ok && result.target) {
+              context.rememberId(record.localId, result.target.id);
+              context.rememberId(record.localInvestorCompanyId, result.target.investorCompanyId);
+              context.rememberId(record.localInvestorPersonId, result.target.investorPersonId);
+            }
+            return result;
+          },
+        };
+      case "fundraising-delete":
+        return {
+          key: record.key,
+          label: record.label,
+          record,
+          run: (context) =>
+            initialData.authMode === "supabase"
+              ? record.entityType === "client"
+                ? deleteFundraisingClientAction({ organizationId: process.env.NEXT_PUBLIC_DEFAULT_ORG_ID, id: context.resolveId(record.id) })
+                : deleteFundraisingTargetAction({ organizationId: process.env.NEXT_PUBLIC_DEFAULT_ORG_ID, id: context.resolveId(record.id) })
+              : Promise.resolve({ ok: false, message: "Sign in with Supabase configured before pushing changes." }),
+        };
     }
   }, [initialData.authMode]);
 
   function queuePendingChange(change: PendingChange) {
-    setPendingChanges((current) => {
-      const existingIndex = current.findIndex((item) => item.key === change.key);
-      if (existingIndex === -1) return [...current, change];
-
-      const next = [...current];
-      const existingChange = current[existingIndex];
-      if (isPendingPersonChange(existingChange) && isPendingPersonChange(change)) {
-        const mergedPersonUpdate = mergePendingPersonUpdate(existingChange.personUpdate, change.personUpdate);
-        next[existingIndex] = {
-          ...change,
-          personUpdate: mergedPersonUpdate,
-          record: {
-            kind: "person",
-            key: change.key,
-            label: change.label,
-            personUpdate: mergedPersonUpdate,
-          },
-        };
-      } else {
-        next[existingIndex] = change;
-      }
-      return next;
-    });
+    setPendingChanges((current) => upsertOnePendingChange(current, change));
     setSyncMessage(`${change.label} queued locally.`);
+  }
+
+  function queuePendingRecord(record: PendingChangeRecord) {
+    queuePendingChange(buildPendingChange(record));
+  }
+
+  function discardPendingChange(key: string, label?: string) {
+    setPendingChanges((current) => current.filter((change) => change.key !== key));
+    if (label) setSyncMessage(`${label} removed from queued changes.`);
   }
 
   async function pushPendingChanges() {
     if (pendingChanges.length === 0 || isPushingChanges) return;
 
     const changes = pendingChanges;
+    const pushContext = createPendingPushContext(pendingIdResolutionsRef.current);
     const prePersonChanges = changes.filter((change) => change.runBeforePersonBatch);
     const personChanges = changes.filter(isPendingPersonChange);
     const otherChanges = changes.filter((change) => !isPendingPersonChange(change) && !change.runBeforePersonBatch);
@@ -242,7 +346,7 @@ export function usePendingChanges(initialData: DashboardData) {
 
     for (let index = 0; index < prePersonChanges.length; index += 1) {
       const change = prePersonChanges[index];
-      const result = await change.run();
+      const result = await change.run(pushContext);
       if (!result.ok) {
         setPendingChanges(changes);
         setSyncMessage(`Push stopped at "${change.label}": ${result.message}`);
@@ -273,7 +377,7 @@ export function usePendingChanges(initialData: DashboardData) {
 
     for (let index = 0; index < otherChanges.length; index += 1) {
       const change = otherChanges[index];
-      const result = await change.run();
+      const result = await change.run(pushContext);
       if (!result.ok) {
         setPendingChanges(otherChanges.slice(index));
         setSyncMessage(`Push stopped at "${change.label}": ${result.message}`);
@@ -283,8 +387,10 @@ export function usePendingChanges(initialData: DashboardData) {
     }
 
     setPendingChanges([]);
+    pendingIdResolutionsRef.current.clear();
     setSyncMessage(`Pushed ${formatChangeCount(changes.length)}.`);
     setIsPushingChanges(false);
+    router.refresh();
   }
 
   async function pushPendingEnrichments() {
@@ -298,7 +404,7 @@ export function usePendingChanges(initialData: DashboardData) {
 
     for (let index = 0; index < changes.length; index += 1) {
       const change = changes[index];
-      const result = await change.run();
+      const result = await change.run(createPendingPushContext(pendingIdResolutionsRef.current));
       if (!result.ok) {
         setSyncMessage(`Push stopped at "${change.label}": ${result.message}`);
         setIsPushingChanges(false);
@@ -368,6 +474,8 @@ export function usePendingChanges(initialData: DashboardData) {
     setSyncMessage,
     buildPendingChange,
     queuePendingChange,
+    queuePendingRecord,
+    discardPendingChange,
     pushPendingChanges,
     pushPendingEnrichments,
     queuePersonUpdate,

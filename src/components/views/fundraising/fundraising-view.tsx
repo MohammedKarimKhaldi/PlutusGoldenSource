@@ -17,11 +17,13 @@ import { defaultFundraisingClientDraft, defaultFundraisingTargetDraft, formatNum
 
 export function FundraisingView({
   initialClientDashboard, companies, peopleDirectory, accountingData, accountingAccess,
-  dataMode, currentUserName, onOpenCompany, onOpenAccounting, onAddCreatedCompany, onAddCreatedPerson,
+  dataMode, currentUserName, onOpenCompany, onOpenCompanyPage, onOpenAccounting, onAddCreatedCompany, onAddCreatedPerson,
+  queuePendingRecord, discardPendingChange,
 }: FundraisingViewProps) {
   const data = useFundraisingData({
     initialClientDashboard, companies, peopleDirectory, accountingData, accountingAccess,
     dataMode, currentUserName, onOpenAccounting, onAddCreatedCompany, onAddCreatedPerson,
+    queuePendingRecord, discardPendingChange,
   });
 
   const listContainerRef = useRef<HTMLDivElement>(null);
@@ -113,6 +115,7 @@ export function FundraisingView({
                         targets={targets}
                         primaryContact={primaryContact}
                         onOpenCompany={onOpenCompany}
+                        onOpenCompanyPage={onOpenCompanyPage}
                         onEdit={data.editFundraisingClient}
                         onAddTarget={data.startFundraisingTarget}
                         onAccounting={(cid) => onOpenAccounting(cid)}
@@ -152,10 +155,12 @@ export function FundraisingView({
         {data.fundraisingTab === "finance" ? (
           <FundraisingFinanceTab
             filteredFundraisingClients={data.filteredFundraisingClients}
+            retainerPeriods={data.retainerPeriods}
             accountingData={accountingData}
             accountingAccess={accountingAccess}
             companyNameById={data.companyNameById}
             onOpenAccounting={onOpenAccounting}
+            onGenerateInvoice={data.generateRetainerInvoice}
           />
         ) : null}
       </div>

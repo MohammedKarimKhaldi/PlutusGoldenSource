@@ -59,6 +59,10 @@ export function FundraisingKpi({ fundraisingStats, fundraisingData, accountingAc
                     <dd>{formatMinorMoney(summary.retainerIncomeMinor, summary.currency)}</dd>
                   </div>
                   <div>
+                    <dt>Overdue</dt>
+                    <dd className="retainer-overdue">{summary.overdueRetainerMinor ? formatMinorMoney(summary.overdueRetainerMinor, summary.currency) : "—"}</dd>
+                  </div>
+                  <div>
                     <dt>Outstanding</dt>
                     <dd>{formatMinorMoney(summary.outstandingMinor, summary.currency)}</dd>
                   </div>

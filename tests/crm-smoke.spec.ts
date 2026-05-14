@@ -117,6 +117,20 @@ test("fundraising clients view supports demo client and target workflow", async 
   await expect(page.locator("tr", { hasText: "Morgan Stanley demo target" })).toHaveCount(1);
 });
 
+test("fundraising client cards open company pages", async ({ page }) => {
+  await page.goto("/companies?view=clients");
+
+  await page.getByRole("button", { name: "Open company page for Morgan Stanley" }).dblclick();
+  await expect(page).toHaveURL(/\/companies\/company-morgan-stanley\?client=client-ms-raise$/);
+  await expect(page.getByLabel("Company name")).toHaveValue("Morgan Stanley");
+  await expect(page.getByText("Morgan Stanley strategic raise")).toBeVisible();
+
+  await page.goto("/companies?view=clients");
+  await page.getByRole("button", { name: "Open company page for Goldman Sachs" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/companies\/company-goldman\?client=client-gs-raise$/);
+});
+
 test("login page shows safe auth feedback", async ({ page }) => {
   await page.goto("/login?error=invalid_credentials");
   await expect(page.getByText("Email or password is incorrect.")).toBeVisible();

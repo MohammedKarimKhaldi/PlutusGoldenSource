@@ -70,6 +70,8 @@ class FakeInsertQuery {
       data: {
         id: "44444444-4444-4444-8444-444444444444",
         company_id: this.database.documentInserts[0]?.company_id,
+        fundraising_client_id: null,
+        retainer_period_date: null,
         document_type: this.database.documentInserts[0]?.document_type,
         status: this.database.documentInserts[0]?.status,
         title: this.database.documentInserts[0]?.title,
@@ -157,6 +159,8 @@ function existingDocumentRow(): InsertRow {
   return {
     id: "44444444-4444-4444-8444-444444444444",
     company_id: companyId,
+    fundraising_client_id: null,
+    retainer_period_date: null,
     document_type: "retainer",
     status: "open",
     title: "Mistaken retainer",

@@ -56,6 +56,34 @@ class FakeFundraisingQuery {
     return Promise.resolve({ data: [], error: null });
   }
 
+  then(resolve: (value: { data?: Row[] | null; error: null }) => void) {
+    if (this.table === "accounting_documents" && this.operation === "select") {
+      resolve({ data: this.database.accountingDocuments, error: null });
+      return;
+    }
+    if (this.table === "accounting_documents" && this.operation === "insert") {
+      this.database.accountingDocumentInserts.push(this.row ?? {});
+      this.database.accountingDocuments.push(accountingDocumentRow(this.row ?? {}, `doc-${this.database.accountingDocumentInserts.length}`));
+      resolve({ error: null });
+      return;
+    }
+    if (this.table === "accounting_documents" && this.operation === "update") {
+      this.database.accountingDocumentUpdates.push({ row: this.row ?? {}, filters: { ...this.filters } });
+      this.database.accountingDocuments = this.database.accountingDocuments.map((document) =>
+        document.id === this.filters.id ? { ...document, ...(this.row ?? {}) } : document,
+      );
+      resolve({ error: null });
+      return;
+    }
+    if (this.table === "accounting_ledger_entries" && this.operation === "insert") {
+      this.database.accountingLedgerInserts.push(this.row ?? {});
+      resolve({ error: null });
+      return;
+    }
+    if (this.operation === "delete") this.database.deletes.push({ table: this.table, filters: this.filters });
+    resolve({ error: null });
+  }
+
   maybeSingle() {
     if (this.table === "organization_members") {
       return Promise.resolve({ data: this.database.isOrgMember ? { role: "member" } : null, error: null });
@@ -94,10 +122,6 @@ class FakeFundraisingQuery {
     return Promise.resolve({ data: { id: "row-1" }, error: null });
   }
 
-  then(resolve: (value: { error: null }) => void) {
-    if (this.operation === "delete") this.database.deletes.push({ table: this.table, filters: this.filters });
-    resolve({ error: null });
-  }
 }
 
 class FakeFundraisingTable {
@@ -127,7 +151,11 @@ class FakeFundraisingSupabase {
   readonly companyInserts: Row[] = [];
   readonly clientInserts: Row[] = [];
   readonly targetInserts: Row[] = [];
+  readonly accountingDocumentInserts: Row[] = [];
+  readonly accountingDocumentUpdates: Array<{ row: Row; filters: Record<string, string> }> = [];
+  readonly accountingLedgerInserts: Row[] = [];
   readonly deletes: Array<{ table: string; filters: Record<string, string> }> = [];
+  accountingDocuments: Row[] = [];
 
   constructor(
     readonly isOrgMember: boolean,
@@ -155,6 +183,11 @@ function fundraisingClientRow(row: Row, id: string) {
     signed_on: row.signed_on,
     target_raise_amount_minor: row.target_raise_amount_minor,
     target_raise_currency: row.target_raise_currency,
+    retainer_amount_minor: row.retainer_amount_minor,
+    retainer_currency: row.retainer_currency,
+    retainer_cadence: row.retainer_cadence,
+    retainer_schedule: row.retainer_schedule,
+    retainer_next_billing_date: row.retainer_next_billing_date,
     materials_url: null,
     data_room_url: null,
     notes: row.notes,
@@ -162,6 +195,32 @@ function fundraisingClientRow(row: Row, id: string) {
     updated_by: userId,
     created_at: "2026-04-01T00:00:00Z",
     updated_at: "2026-04-01T00:00:00Z",
+  };
+}
+
+function accountingDocumentRow(row: Row, id: string) {
+  return {
+    id,
+    company_id: row.company_id,
+    fundraising_client_id: row.fundraising_client_id,
+    retainer_period_date: row.retainer_period_date,
+    document_type: row.document_type,
+    status: row.status,
+    title: row.title,
+    amount_minor: row.amount_minor,
+    currency: row.currency,
+    issued_on: row.issued_on,
+    due_on: row.due_on,
+    external_reference: row.external_reference,
+    document_url: row.document_url,
+    notes: row.notes,
+    created_by: row.created_by,
+    updated_by: row.updated_by,
+    voided_at: row.voided_at ?? null,
+    voided_by: row.voided_by ?? null,
+    void_reason: row.void_reason ?? null,
+    created_at: "2026-04-01T00:00:00Z",
+    updated_at: row.updated_at ?? "2026-04-01T00:00:00Z",
   };
 }
 
@@ -235,6 +294,131 @@ describe("fundraising actions", () => {
       mandate_name: "Signed Client raise",
       created_by: userId,
     });
+  });
+
+  it("creates linked draft retainer invoices without ledger payments", async () => {
+    const supabase = new FakeFundraisingSupabase(true);
+    vi.mocked(createSupabaseServerClient).mockResolvedValue(supabase as unknown as NonNullable<Awaited<ReturnType<typeof createSupabaseServerClient>>>);
+
+    const result = await saveFundraisingClientAction({
+      organizationId,
+      companyId,
+      mandateName: "Retained Client raise",
+      stage: "signed",
+      retainerAmountMinor: 250000,
+      retainerCurrency: "GBP",
+      retainerCadence: "quarterly",
+      retainerNextBillingDate: "2026-01-15",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(supabase.accountingDocumentInserts).toHaveLength(3);
+    expect(supabase.accountingDocumentInserts[0]).toMatchObject({
+      organization_id: organizationId,
+      company_id: companyId,
+      fundraising_client_id: clientId,
+      retainer_period_date: "2026-01-15",
+      document_type: "retainer",
+      status: "draft",
+      amount_minor: 250000,
+      currency: "GBP",
+      issued_on: "2026-01-15",
+      due_on: "2026-01-15",
+    });
+    expect(supabase.accountingDocumentInserts.map((row) => row.retainer_period_date)).toEqual(["2026-01-15", "2026-04-15", "2026-07-15"]);
+    expect(supabase.accountingLedgerInserts).toEqual([]);
+  });
+
+  it("updates existing draft retainer forecasts without duplicating them", async () => {
+    const supabase = new FakeFundraisingSupabase(true);
+    supabase.accountingDocuments = [
+      accountingDocumentRow(
+        {
+          organization_id: organizationId,
+          company_id: companyId,
+          fundraising_client_id: clientId,
+          retainer_period_date: "2026-01-15",
+          document_type: "retainer",
+          status: "draft",
+          title: "Old retainer",
+          amount_minor: 100000,
+          currency: "GBP",
+          issued_on: "2026-01-15",
+          due_on: "2026-01-15",
+          external_reference: `fundraising-retainer:${clientId}:2026-01-15`,
+        },
+        "doc-existing",
+      ),
+    ];
+    vi.mocked(createSupabaseServerClient).mockResolvedValue(supabase as unknown as NonNullable<Awaited<ReturnType<typeof createSupabaseServerClient>>>);
+
+    const result = await saveFundraisingClientAction({
+      organizationId,
+      clientId,
+      companyId,
+      mandateName: "Retained Client raise",
+      stage: "signed",
+      retainerAmountMinor: 300000,
+      retainerCurrency: "GBP",
+      retainerCadence: "annual",
+      retainerNextBillingDate: "2026-01-15",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(supabase.accountingDocumentUpdates[0]).toMatchObject({
+      filters: { organization_id: organizationId, id: "doc-existing" },
+      row: expect.objectContaining({ amount_minor: 300000, retainer_period_date: "2026-01-15" }),
+    });
+    expect(supabase.accountingDocumentInserts).toEqual([]);
+  });
+
+  it("voids obsolete draft retainer forecasts while preserving non-draft documents", async () => {
+    const supabase = new FakeFundraisingSupabase(true);
+    supabase.accountingDocuments = [
+      accountingDocumentRow(
+        {
+          company_id: companyId,
+          fundraising_client_id: clientId,
+          retainer_period_date: "2026-04-15",
+          document_type: "retainer",
+          status: "draft",
+          amount_minor: 100000,
+          currency: "GBP",
+          external_reference: `fundraising-retainer:${clientId}:2026-04-15`,
+        },
+        "doc-obsolete-draft",
+      ),
+      accountingDocumentRow(
+        {
+          company_id: companyId,
+          fundraising_client_id: clientId,
+          retainer_period_date: "2026-07-15",
+          document_type: "retainer",
+          status: "open",
+          amount_minor: 100000,
+          currency: "GBP",
+          external_reference: `fundraising-retainer:${clientId}:2026-07-15`,
+        },
+        "doc-open",
+      ),
+    ];
+    vi.mocked(createSupabaseServerClient).mockResolvedValue(supabase as unknown as NonNullable<Awaited<ReturnType<typeof createSupabaseServerClient>>>);
+
+    const result = await saveFundraisingClientAction({
+      organizationId,
+      clientId,
+      companyId,
+      mandateName: "Retained Client raise",
+      stage: "signed",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(supabase.accountingDocumentUpdates).toEqual([
+      expect.objectContaining({
+        filters: { organization_id: organizationId, id: "doc-obsolete-draft" },
+        row: expect.objectContaining({ status: "void" }),
+      }),
+    ]);
   });
 
   it("creates investor targets with a newly linked CRM company", async () => {

@@ -11,6 +11,8 @@ function makeDocument(overrides: Partial<AccountingDocument> = {}): AccountingDo
   return {
     id: "doc-1",
     companyId,
+    fundraisingClientId: null,
+    retainerPeriodDate: null,
     documentType: "retainer",
     status: "open",
     title: "Retainer",

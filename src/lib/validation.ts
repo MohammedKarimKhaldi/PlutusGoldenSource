@@ -10,6 +10,7 @@ import {
   CAPACITY_STATUSES,
   ENRICHMENT_STATUSES,
   FUNDRAISING_CLIENT_STAGES,
+  FUNDRAISING_RETAINER_CADENCES,
   FUNDRAISING_TARGET_STAGES,
   INVESTMENT_DEAL_STATUSES,
   INVESTMENT_STATUSES,
@@ -362,6 +363,9 @@ export const fundraisingClientSchema = z
     targetRaiseCurrency: optionalCurrencySchema,
     retainerAmountMinor: optionalMoneyMinorSchema,
     retainerCurrency: optionalCurrencySchema,
+    retainerCadence: z.enum(FUNDRAISING_RETAINER_CADENCES).nullable().optional(),
+    retainerSchedule: nullableTrimmedTextSchema(120),
+    retainerNextBillingDate: z.string().date().nullable().optional(),
     materialsUrl: nullableTrimmedTextSchema(1000),
     dataRoomUrl: nullableTrimmedTextSchema(1000),
     notes: nullableTrimmedTextSchema(4000),
@@ -388,6 +392,22 @@ export const fundraisingClientSchema = z
         code: "custom",
         message: "Retainer amount and currency must be provided together.",
         path: ["retainerCurrency"],
+      });
+    }
+
+    if (value.retainerAmountMinor != null && !value.retainerCadence) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Choose a retainer cadence.",
+        path: ["retainerCadence"],
+      });
+    }
+
+    if (value.retainerAmountMinor != null && !value.retainerNextBillingDate) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Choose the next retainer billing date.",
+        path: ["retainerNextBillingDate"],
       });
     }
   });

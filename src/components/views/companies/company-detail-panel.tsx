@@ -1,14 +1,22 @@
-import { Activity, Check, ChevronDown, Flag, FlaskConical, Mail, Pencil, Plus, Star, X } from "lucide-react";
+import { Activity, Check, ChevronDown, CreditCard, Flag, FlaskConical, Mail, Pencil, Plus, Star, X } from "lucide-react";
 import clsx from "clsx";
 import {
   SOURCE_QUALITY_LABELS,
   INVESTMENT_STATUS_LABELS,
   CAPACITY_STATUS_LABELS,
   INVESTMENT_DEAL_STATUS_LABELS,
+  ACCOUNTING_DOCUMENT_STATUS_LABELS,
   relationshipChipLabel,
   formatDate,
+  formatMinorMoney,
+  formatNumber,
 } from "@/components/shared";
 import type { InvestmentDraft, EnrichmentDraft } from "@/components/shared";
+import {
+  FUNDRAISING_CLIENT_STAGE_LABELS,
+  FUNDRAISING_TARGET_STAGE_LABELS,
+  RETENTION_PERIOD_STATUS_LABELS,
+} from "@/components/views/fundraising/fundraising-types";
 import {
   INVESTMENT_STATUSES,
   CAPACITY_STATUSES,
@@ -18,6 +26,7 @@ import {
   type InvestmentDealStatus,
 } from "@/lib/types";
 import type { Company, InvestmentRelationship, Person } from "@/lib/types";
+import type { FundraisingCompanyProfile } from "@/lib/fundraising-company-profile";
 
 interface CompanyDetailPanelProps {
   activeCompany: Company;
@@ -40,11 +49,25 @@ interface CompanyDetailPanelProps {
   setCompanyInvestmentDraft: React.Dispatch<React.SetStateAction<InvestmentDraft | null>>;
   saveInvestmentRelationship: (relationship: InvestmentRelationship, draft: InvestmentDraft, label: string) => void;
   addInvestmentDealLocally: (relationship: InvestmentRelationship, draft: InvestmentDraft, label: string) => void;
+  fundraisingCompanyProfile: FundraisingCompanyProfile | null;
+  accountingCanView: boolean;
+  onSelectFundraisingClient: (clientId: string) => void;
   toggleHighlight: (companyId: string, person: Person) => void;
   startPersonEdit: (person: Person) => void;
   noteText: string;
   setNoteText: React.Dispatch<React.SetStateAction<string>>;
   addManualNote: () => void;
+}
+
+function formatOptionalMoney(amountMinor: number | null, currency: string | null) {
+  return amountMinor != null && currency ? formatMinorMoney(amountMinor, currency) : "—";
+}
+
+function targetTicketLabel(target: FundraisingCompanyProfile["targets"][number]) {
+  if (!target.ticketSizeCurrency || (target.ticketSizeMinMinor == null && target.ticketSizeMaxMinor == null)) return "—";
+  const min = target.ticketSizeMinMinor == null ? "?" : formatMinorMoney(target.ticketSizeMinMinor, target.ticketSizeCurrency);
+  const max = target.ticketSizeMaxMinor == null ? "?" : formatMinorMoney(target.ticketSizeMaxMinor, target.ticketSizeCurrency);
+  return `${min} - ${max}`;
 }
 
 export function CompanyDetailPanel({
@@ -68,6 +91,9 @@ export function CompanyDetailPanel({
   setCompanyInvestmentDraft,
   saveInvestmentRelationship,
   addInvestmentDealLocally,
+  fundraisingCompanyProfile,
+  accountingCanView,
+  onSelectFundraisingClient,
   toggleHighlight,
   startPersonEdit,
   noteText,
@@ -140,6 +166,174 @@ export function CompanyDetailPanel({
           <input readOnly value={`${Math.round((activeCompany.mergeConfidence ?? 0) * 100)}% merge confidence`} />
         </label>
       </div>
+
+      {fundraisingCompanyProfile ? (
+        <section className="detail-section fundraising-company-detail">
+          <div className="section-heading">
+            <h2>Fundraising mandate</h2>
+            <span>{fundraisingCompanyProfile.siblingClients.length} mandate{fundraisingCompanyProfile.siblingClients.length === 1 ? "" : "s"}</span>
+          </div>
+
+          {fundraisingCompanyProfile.siblingClients.length > 1 ? (
+            <label className="select-filter fundraising-mandate-select">
+              <span>Mandate</span>
+              <select value={fundraisingCompanyProfile.selectedClient.id} onChange={(event) => onSelectFundraisingClient(event.target.value)}>
+                {fundraisingCompanyProfile.siblingClients.map((client) => (
+                  <option key={client.id} value={client.id}>
+                    {client.mandateName}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={14} />
+            </label>
+          ) : null}
+
+          <div className="fundraising-company-summary">
+            <div>
+              <strong>{fundraisingCompanyProfile.selectedClient.mandateName}</strong>
+              <span>{activeCompany.name} · CRM stage {activeCompany.outreachStage}</span>
+            </div>
+            <span className={clsx("fundraising-stage-pill", fundraisingCompanyProfile.selectedClient.stage)}>
+              {FUNDRAISING_CLIENT_STAGE_LABELS[fundraisingCompanyProfile.selectedClient.stage]}
+            </span>
+          </div>
+
+          <dl className="fundraising-company-stat-grid">
+            <div>
+              <dt>Signed</dt>
+              <dd>{formatDate(fundraisingCompanyProfile.selectedClient.signedOn)}</dd>
+            </div>
+            <div>
+              <dt>Target raise</dt>
+              <dd>{formatOptionalMoney(fundraisingCompanyProfile.selectedClient.targetRaiseAmountMinor, fundraisingCompanyProfile.selectedClient.targetRaiseCurrency)}</dd>
+            </div>
+            <div>
+              <dt>Retainer</dt>
+              <dd>{formatOptionalMoney(fundraisingCompanyProfile.selectedClient.retainerAmountMinor, fundraisingCompanyProfile.selectedClient.retainerCurrency)}</dd>
+              {fundraisingCompanyProfile.selectedClient.retainerSchedule ? <span>{fundraisingCompanyProfile.selectedClient.retainerSchedule}</span> : null}
+            </div>
+            <div>
+              <dt>Next billing</dt>
+              <dd>{formatDate(fundraisingCompanyProfile.selectedClient.retainerNextBillingDate)}</dd>
+            </div>
+          </dl>
+
+          <div className="fundraising-company-contact-grid">
+            <div>
+              <span className="muted helper-copy">Primary contact</span>
+              <strong>{fundraisingCompanyProfile.primaryContact?.displayName ?? "No primary contact"}</strong>
+              <span>{fundraisingCompanyProfile.primaryContact?.jobTitle ?? fundraisingCompanyProfile.primaryContact?.email ?? "—"}</span>
+            </div>
+            <div>
+              <span className="muted helper-copy">Highlighted contacts</span>
+              <strong>{formatNumber(fundraisingCompanyProfile.highlightedContacts.length)}</strong>
+              <span>{fundraisingCompanyProfile.highlightedContacts.map((person) => person.displayName).join(", ") || "None highlighted"}</span>
+            </div>
+          </div>
+
+          <div className="fundraising-company-stat-grid compact">
+            <div>
+              <dt>Targets</dt>
+              <dd>{formatNumber(fundraisingCompanyProfile.metrics.targetCount)}</dd>
+            </div>
+            <div>
+              <dt>Contacted</dt>
+              <dd>{formatNumber(fundraisingCompanyProfile.metrics.contactedCount)}</dd>
+            </div>
+            <div>
+              <dt>Positive replies</dt>
+              <dd>{formatNumber(fundraisingCompanyProfile.metrics.positiveReplyCount)}</dd>
+            </div>
+            <div>
+              <dt>Meetings</dt>
+              <dd>{formatNumber(fundraisingCompanyProfile.metrics.meetingCount)}</dd>
+            </div>
+            <div>
+              <dt>Diligence / soft commits</dt>
+              <dd>{formatNumber(fundraisingCompanyProfile.metrics.diligenceOrSoftCommitCount)}</dd>
+            </div>
+            <div>
+              <dt>Passed / closed</dt>
+              <dd>{formatNumber(fundraisingCompanyProfile.metrics.passedCount + fundraisingCompanyProfile.metrics.closedCount)}</dd>
+            </div>
+          </div>
+
+          <div className="accounting-table-wrap fundraising-company-table-wrap">
+            <table className="accounting-table fundraising-company-table">
+              <thead>
+                <tr>
+                  <th>Investor</th>
+                  <th>Stage</th>
+                  <th>Ticket</th>
+                  <th>Last touch</th>
+                  <th>Next step</th>
+                </tr>
+              </thead>
+              <tbody>
+                {fundraisingCompanyProfile.targets.map((target) => (
+                  <tr key={target.id}>
+                    <td>
+                      <strong>{target.investorName}</strong>
+                      <span>{target.investorType ?? target.investorEmail ?? "Investor"}</span>
+                    </td>
+                    <td>{FUNDRAISING_TARGET_STAGE_LABELS[target.stage]}</td>
+                    <td>{targetTicketLabel(target)}</td>
+                    <td>{formatDate(target.lastContactedAt)}</td>
+                    <td>
+                      <strong>{target.nextStep ?? "—"}</strong>
+                      {target.notes ? <span>{target.notes}</span> : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {fundraisingCompanyProfile.targets.length === 0 ? <p className="empty-state compact">No investor targets linked to this mandate yet.</p> : null}
+          </div>
+
+          <div className="section-heading finance-heading">
+            <h2>Fundraising finance</h2>
+            <span>{accountingCanView ? `${formatNumber(fundraisingCompanyProfile.metrics.openDocumentCount)} open document${fundraisingCompanyProfile.metrics.openDocumentCount === 1 ? "" : "s"}` : "Restricted"}</span>
+          </div>
+          {!accountingCanView ? (
+            <div className="data-notice compact-notice">
+              <CreditCard size={16} />
+              <span>Accounting access is required to view documents, ledger entries, and retainer payment state.</span>
+            </div>
+          ) : (
+            <>
+              <div className="fundraising-company-stat-grid compact">
+                {fundraisingCompanyProfile.financeSummaries.map((summary) => (
+                  <div key={summary.currency}>
+                    <dt>{summary.currency}</dt>
+                    <dd>{formatMinorMoney(summary.paidLedgerMinor, summary.currency)} paid</dd>
+                    <span>{formatMinorMoney(summary.openDocumentMinor, summary.currency)} open · {formatMinorMoney(summary.overdueDocumentMinor, summary.currency)} overdue</span>
+                  </div>
+                ))}
+                {fundraisingCompanyProfile.financeSummaries.length === 0 ? (
+                  <div>
+                    <dt>Finance</dt>
+                    <dd>No linked finance rows</dd>
+                  </div>
+                ) : null}
+              </div>
+              <div className="retainer-period-list">
+                {fundraisingCompanyProfile.retainerPeriods.map((period) => {
+                  const document = fundraisingCompanyProfile.accountingDocuments.find((item) => item.id === period.accountingDocumentId);
+                  return (
+                    <div key={period.id} className="retainer-period-row">
+                      <strong>{formatDate(period.periodDate)}</strong>
+                      <span>{formatMinorMoney(period.expectedAmountMinor, period.currency)}</span>
+                      <span>{RETENTION_PERIOD_STATUS_LABELS[period.status]}</span>
+                      <span>{document ? ACCOUNTING_DOCUMENT_STATUS_LABELS[document.status] : "No document"}</span>
+                    </div>
+                  );
+                })}
+                {fundraisingCompanyProfile.retainerPeriods.length === 0 ? <p className="empty-state compact">No retainer forecast periods for this mandate.</p> : null}
+              </div>
+            </>
+          )}
+        </section>
+      ) : null}
 
       {activeCompanyEnrichmentDraft ? (
         <section className="detail-section enrichment-section">

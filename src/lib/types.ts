@@ -39,6 +39,9 @@ export type AccountingLedgerEntryType = (typeof ACCOUNTING_LEDGER_ENTRY_TYPES)[n
 export const ACCOUNTING_DIRECTIONS = ["incoming", "outgoing"] as const;
 export type AccountingDirection = (typeof ACCOUNTING_DIRECTIONS)[number];
 
+export const FUNDRAISING_RETAINER_CADENCES = ["monthly", "quarterly", "semiannual", "annual"] as const;
+export type FundraisingRetainerCadence = (typeof FUNDRAISING_RETAINER_CADENCES)[number];
+
 export const FUNDRAISING_CLIENT_STAGES = [
   "signed",
   "onboarding",
@@ -176,6 +179,8 @@ export type AccountingAccess = {
 export type AccountingDocument = {
   id: string;
   companyId: string | null;
+  fundraisingClientId: string | null;
+  retainerPeriodDate: string | null;
   documentType: AccountingDocumentType;
   status: AccountingDocumentStatus;
   title: string;
@@ -244,6 +249,9 @@ export type FundraisingClient = {
   targetRaiseCurrency: string | null;
   retainerAmountMinor: number | null;
   retainerCurrency: string | null;
+  retainerCadence: FundraisingRetainerCadence | null;
+  retainerSchedule: string | null;
+  retainerNextBillingDate: string | null;
   materialsUrl: string | null;
   dataRoomUrl: string | null;
   notes: string | null;
@@ -285,11 +293,29 @@ export type FundraisingCurrencySummary = {
   expensesMinor: number;
   netCashMinor: number;
   outstandingMinor: number;
+  pendingRetainerMinor: number;
+  overdueRetainerMinor: number;
+};
+
+export type FundraisingRetainerPeriodStatus = "pending" | "invoiced" | "paid" | "overdue" | "cancelled";
+
+export type FundraisingRetainerPeriod = {
+  id: string;
+  clientId: string;
+  periodDate: string;
+  expectedAmountMinor: number;
+  currency: string;
+  status: FundraisingRetainerPeriodStatus;
+  accountingDocumentId: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type ClientDashboardData = {
   clients: FundraisingClient[];
   targets: FundraisingClientTarget[];
+  retainerPeriods: FundraisingRetainerPeriod[];
   summaries: FundraisingCurrencySummary[];
 };
 

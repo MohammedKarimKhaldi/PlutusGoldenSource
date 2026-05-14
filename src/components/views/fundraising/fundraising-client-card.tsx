@@ -1,6 +1,7 @@
 import { Activity, CreditCard, Flag, Pencil, Plus, UserRound, UsersRound } from "lucide-react";
 import clsx from "clsx";
-import type { FundraisingClient, FundraisingClientTarget, Company } from "@/lib/types";
+import type { SyntheticEvent } from "react";
+import type { FundraisingClient, FundraisingClientTarget } from "@/lib/types";
 import type { PeopleDirectoryRow } from "@/components/shared";
 import {
   formatDate,
@@ -16,6 +17,7 @@ type FundraisingClientCardProps = {
   targets: FundraisingClientTarget[];
   primaryContact: PeopleDirectoryRow["person"] | null;
   onOpenCompany: (companyId: string) => void;
+  onOpenCompanyPage: (companyId: string, clientId: string) => void;
   onEdit: (client: FundraisingClient) => void;
   onAddTarget: (clientId: string) => void;
   onAccounting: (companyId: string) => void;
@@ -26,15 +28,37 @@ type FundraisingClientCardProps = {
 
 export function FundraisingClientCard({
   client, companyName, targets, primaryContact,
-  onOpenCompany, onEdit, onAddTarget, onAccounting, onDelete,
+  onOpenCompany, onOpenCompanyPage, onEdit, onAddTarget, onAccounting, onDelete,
   isSaving, accountingAccess,
 }: FundraisingClientCardProps) {
+  function openCompanyPage() {
+    onOpenCompanyPage(client.companyId, client.id);
+  }
+
+  function stopCardOpen(event: SyntheticEvent) {
+    event.stopPropagation();
+  }
+
   return (
-    <article className="fundraising-client-card" style={{ borderLeftColor: CLIENT_STAGE_COLORS[client.stage] }}>
+    <article
+      className="fundraising-client-card"
+      style={{ borderLeftColor: CLIENT_STAGE_COLORS[client.stage] }}
+      role="button"
+      tabIndex={0}
+      title="Open company page"
+      aria-label={`Open company page for ${companyName}`}
+      onDoubleClick={openCompanyPage}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        openCompanyPage();
+      }}
+    >
       <div className="fundraising-card-header">
         <div>
           <strong>{client.mandateName}</strong>
-          <button type="button" className="text-button compact" onClick={() => onOpenCompany(client.companyId)}>
+          <button type="button" className="text-button compact" onClick={() => onOpenCompany(client.companyId)} onDoubleClick={stopCardOpen}>
             {companyName}
           </button>
         </div>
@@ -53,11 +77,15 @@ export function FundraisingClientCard({
             : "No target raise"}
         </span>
         {client.retainerAmountMinor && client.retainerCurrency ? (
-          <span>Retainer: {formatMinorMoney(client.retainerAmountMinor, client.retainerCurrency)}</span>
+          <span>
+            Retainer: {formatMinorMoney(client.retainerAmountMinor, client.retainerCurrency)}
+            {client.retainerSchedule ? <span className="retainer-schedule-badge">{client.retainerSchedule}</span> : null}
+            {client.retainerNextBillingDate ? <span className="retainer-next-date">next {formatDate(client.retainerNextBillingDate)}</span> : null}
+          </span>
         ) : null}
       </div>
       {client.notes ? <p className="pipeline-card-note">{client.notes}</p> : null}
-      <div className="fundraising-row-actions">
+      <div className="fundraising-row-actions" onDoubleClick={stopCardOpen}>
         <button type="button" className="text-button compact" onClick={() => onEdit(client)}>
           <Pencil size={13} /> Edit
         </button>

@@ -1,5 +1,5 @@
 import { buildAccountingSummaries } from "@/lib/accounting";
-import type { AccountingData, ClientDashboardData, FundraisingClient, FundraisingCurrencySummary, FundraisingClientTarget } from "@/lib/types";
+import type { AccountingData, ClientDashboardData, FundraisingClient, FundraisingCurrencySummary, FundraisingClientTarget, FundraisingRetainerPeriod } from "@/lib/types";
 
 function addCurrencySummary(summaries: Map<string, FundraisingCurrencySummary>, currency: string) {
   const existing = summaries.get(currency);
@@ -15,6 +15,8 @@ function addCurrencySummary(summaries: Map<string, FundraisingCurrencySummary>, 
     expensesMinor: 0,
     netCashMinor: 0,
     outstandingMinor: 0,
+    pendingRetainerMinor: 0,
+    overdueRetainerMinor: 0,
   };
   summaries.set(currency, summary);
   return summary;
@@ -24,6 +26,7 @@ export function emptyClientDashboardData(): ClientDashboardData {
   return {
     clients: [],
     targets: [],
+    retainerPeriods: [],
     summaries: [],
   };
 }
@@ -32,6 +35,7 @@ export function buildFundraisingSummaries(
   clients: FundraisingClient[],
   targets: FundraisingClientTarget[],
   accounting: AccountingData | null,
+  retainerPeriods: FundraisingRetainerPeriod[] = [],
 ): FundraisingCurrencySummary[] {
   const summaries = new Map<string, FundraisingCurrencySummary>();
   const clientCompanyIds = new Set(clients.map((client) => client.companyId));
@@ -48,9 +52,13 @@ export function buildFundraisingSummaries(
     summary.ticketSizeMaxMinor += target.ticketSizeMaxMinor ?? target.ticketSizeMinMinor ?? 0;
   }
 
-  for (const client of clients) {
-    if (!client.retainerCurrency || client.retainerAmountMinor == null) continue;
-    addCurrencySummary(summaries, client.retainerCurrency).retainerIncomeMinor += client.retainerAmountMinor;
+  for (const period of retainerPeriods) {
+    const summary = addCurrencySummary(summaries, period.currency);
+    if (period.status === "pending") {
+      summary.pendingRetainerMinor += period.expectedAmountMinor;
+    } else if (period.status === "overdue") {
+      summary.overdueRetainerMinor += period.expectedAmountMinor;
+    }
   }
 
   if (accounting) {
@@ -80,6 +88,6 @@ export function buildFundraisingSummaries(
 export function withFundraisingSummaries(data: Omit<ClientDashboardData, "summaries">, accounting: AccountingData | null): ClientDashboardData {
   return {
     ...data,
-    summaries: buildFundraisingSummaries(data.clients, data.targets, accounting),
+    summaries: buildFundraisingSummaries(data.clients, data.targets, accounting, data.retainerPeriods),
   };
 }

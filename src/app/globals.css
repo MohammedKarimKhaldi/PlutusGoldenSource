@@ -2224,6 +2224,11 @@ button.contact-chip {
   background: var(--surface);
 }
 
+.fundraising-client-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .fundraising-card-header,
 .fundraising-row-actions {
   display: flex;
@@ -2325,6 +2330,138 @@ button.contact-chip {
 .fundraising-targets-table,
 .fundraising-finance-table {
   align-self: stretch;
+}
+
+.fundraising-company-detail {
+  display: grid;
+  gap: 10px;
+}
+
+.fundraising-mandate-select {
+  width: min(100%, 360px);
+}
+
+.fundraising-company-summary,
+.fundraising-company-contact-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.fundraising-company-summary strong,
+.fundraising-company-contact-grid strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.fundraising-company-summary span,
+.fundraising-company-contact-grid span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.fundraising-company-contact-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.fundraising-company-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.fundraising-company-stat-grid.compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.fundraising-company-stat-grid > div {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.fundraising-company-stat-grid dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.fundraising-company-stat-grid dd {
+  margin: 3px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.fundraising-company-stat-grid span {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.fundraising-company-table-wrap {
+  margin-top: 2px;
+}
+
+.fundraising-company-table {
+  min-width: 700px;
+}
+
+.finance-heading {
+  margin-top: 4px;
+  margin-bottom: 0;
+}
+
+.retainer-period-list {
+  display: grid;
+  gap: 6px;
+}
+
+.retainer-period-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 34px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdff;
+  font-size: 12px;
+}
+
+.retainer-period-row strong {
+  color: var(--text);
+}
+
+.retainer-period-row span {
+  color: var(--muted-strong);
+  font-weight: 700;
 }
 
 .pipeline-card .deal-status-pill {
@@ -2747,6 +2884,8 @@ button.contact-chip {
 .drawer-body {
   overflow: auto;
   padding: 18px;
+  display: flex;
+  flex-direction: column;
 }
 
 .drawer-footer {
@@ -2756,6 +2895,203 @@ button.contact-chip {
   gap: 8px;
   padding: 14px 18px 16px;
   border-top: 1px solid var(--line);
+}
+
+/* ── Drawer form enhancements ── */
+
+.drawer-tabs {
+  display: flex;
+  min-height: 34px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  margin-bottom: 14px;
+  flex-shrink: 0;
+}
+
+.drawer-tabs button {
+  flex: 1;
+  min-height: 26px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted-strong);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.drawer-tabs button.active {
+  color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.drawer-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+}
+
+.drawer-form label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.drawer-form label:focus-within {
+  color: var(--accent);
+}
+
+.drawer-form input,
+.drawer-form select,
+.drawer-form textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.drawer-form input:focus,
+.drawer-form select:focus,
+.drawer-form textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(29, 78, 216, 0.12);
+}
+
+.drawer-form input,
+.drawer-form select {
+  min-height: 36px;
+  padding: 7px 9px;
+}
+
+.drawer-form textarea {
+  resize: vertical;
+  padding: 8px 9px;
+}
+
+.form-row-2col {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.drawer-section-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+
+.drawer-section-card-title {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted-strong);
+  margin: 0 0 2px;
+}
+
+.drawer-tab-content {
+  animation: fadeInUp 160ms ease both;
+}
+
+/* ── Drawer confirmation summary ── */
+
+.drawer-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: fadeInUp 160ms ease both;
+}
+
+.drawer-confirm-heading {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text);
+  margin: 0;
+}
+
+.drawer-confirm-section {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+
+.drawer-confirm-dl {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+}
+
+.drawer-confirm-dl > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.drawer-confirm-dl dt {
+  color: var(--muted);
+  font-weight: 650;
+  min-width: 80px;
+  flex-shrink: 0;
+}
+
+.drawer-confirm-dl dd {
+  margin: 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ── Retainer schedule display ── */
+
+.retainer-schedule-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-muted);
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.retainer-next-date {
+  display: inline-block;
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.retainer-period-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.retainer-overdue {
+  color: var(--danger) !important;
 }
 
 /* ── Fundraising view enhancements ── */
@@ -2985,6 +3321,11 @@ button.contact-chip {
   .investment-grid,
   .editor-grid,
   .editor-investment-grid,
+  .fundraising-company-summary,
+  .fundraising-company-contact-grid,
+  .fundraising-company-stat-grid,
+  .fundraising-company-stat-grid.compact,
+  .retainer-period-row,
   .accounting-form-row {
     grid-template-columns: 1fr;
   }

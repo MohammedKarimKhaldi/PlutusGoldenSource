@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildFundraisingSummaries } from "../src/lib/fundraising";
+import { buildRetainerForecastDates, buildRetainerPeriodsFromAccountingDocuments } from "../src/lib/retainer-forecast";
 import type { AccountingData, AccountingDocument, AccountingLedgerEntry, FundraisingClient, FundraisingClientTarget } from "../src/lib/types";
 import { fundraisingClientSchema, fundraisingTargetSchema } from "../src/lib/validation";
 
@@ -19,6 +20,11 @@ function makeClient(overrides: Partial<FundraisingClient> = {}): FundraisingClie
     signedOn: "2026-04-01",
     targetRaiseAmountMinor: 1000000,
     targetRaiseCurrency: "GBP",
+    retainerAmountMinor: null,
+    retainerCurrency: null,
+    retainerCadence: null,
+    retainerSchedule: null,
+    retainerNextBillingDate: null,
     materialsUrl: null,
     dataRoomUrl: null,
     notes: null,
@@ -59,6 +65,8 @@ function makeDocument(overrides: Partial<AccountingDocument> = {}): AccountingDo
   return {
     id: "doc-1",
     companyId,
+    fundraisingClientId: null,
+    retainerPeriodDate: null,
     documentType: "retainer",
     status: "open",
     title: "Retainer",
@@ -162,6 +170,19 @@ describe("fundraising validation", () => {
 
     expect(result.success).toBe(false);
   });
+
+  it("requires cadence and next billing date when clients have retainers", () => {
+    const result = fundraisingClientSchema.safeParse({
+      organizationId,
+      companyId,
+      mandateName: "Client raise",
+      stage: "signed",
+      retainerAmountMinor: 250000,
+      retainerCurrency: "GBP",
+    });
+
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("fundraising summaries", () => {
@@ -191,5 +212,50 @@ describe("fundraising summaries", () => {
       retainerIncomeMinor: 150000,
       outstandingMinor: 50000,
     });
+  });
+});
+
+describe("retainer forecasts", () => {
+  it("generates cadence dates through the six-month forecast window", () => {
+    expect(buildRetainerForecastDates("2026-01-31", "monthly")).toEqual([
+      "2026-01-31",
+      "2026-02-28",
+      "2026-03-31",
+      "2026-04-30",
+      "2026-05-31",
+      "2026-06-30",
+      "2026-07-31",
+    ]);
+    expect(buildRetainerForecastDates("2026-01-15", "quarterly")).toEqual(["2026-01-15", "2026-04-15", "2026-07-15"]);
+    expect(buildRetainerForecastDates("2026-01-15", "semiannual")).toEqual(["2026-01-15", "2026-07-15"]);
+    expect(buildRetainerForecastDates("2026-01-15", "annual")).toEqual(["2026-01-15"]);
+  });
+
+  it("maps linked accounting documents into retainer periods", () => {
+    const periods = buildRetainerPeriodsFromAccountingDocuments(
+      [
+        makeDocument({
+          id: "doc-pending",
+          status: "draft",
+          fundraisingClientId: "client-1",
+          retainerPeriodDate: "2026-05-15",
+          dueOn: "2026-05-15",
+        }),
+        makeDocument({
+          id: "doc-overdue",
+          status: "open",
+          fundraisingClientId: "client-1",
+          retainerPeriodDate: "2026-04-15",
+          dueOn: "2026-04-15",
+        }),
+        makeDocument({ id: "doc-unlinked", fundraisingClientId: null, retainerPeriodDate: null }),
+      ],
+      "2026-05-01",
+    );
+
+    expect(periods).toEqual([
+      expect.objectContaining({ id: "doc-overdue", status: "overdue", accountingDocumentId: "doc-overdue" }),
+      expect.objectContaining({ id: "doc-pending", status: "pending", accountingDocumentId: "doc-pending" }),
+    ]);
   });
 });

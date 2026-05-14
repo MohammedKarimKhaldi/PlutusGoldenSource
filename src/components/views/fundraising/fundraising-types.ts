@@ -6,17 +6,22 @@ import type {
   FundraisingClient,
   FundraisingClientStage,
   FundraisingClientTarget,
+  FundraisingRetainerCadence,
+  FundraisingRetainerPeriod,
+  FundraisingRetainerPeriodStatus,
   FundraisingTargetStage,
-  Person,
 } from "@/lib/types";
 import {
   FUNDRAISING_CLIENT_STAGES,
+  FUNDRAISING_RETAINER_CADENCES,
   FUNDRAISING_TARGET_STAGES,
 } from "@/lib/types";
+import type { PendingChangeRecord } from "@/lib/crm-types";
+import { RETAINER_CADENCE_LABELS } from "@/lib/retainer-forecast";
 import type { PeopleDirectoryRow } from "@/components/shared";
 
-export { FUNDRAISING_CLIENT_STAGES, FUNDRAISING_TARGET_STAGES };
-export type { FundraisingClientStage, FundraisingTargetStage };
+export { FUNDRAISING_CLIENT_STAGES, FUNDRAISING_RETAINER_CADENCES, FUNDRAISING_TARGET_STAGES, RETAINER_CADENCE_LABELS };
+export type { FundraisingClientStage, FundraisingRetainerCadence, FundraisingTargetStage, FundraisingRetainerPeriod, FundraisingRetainerPeriodStatus };
 
 export type FundraisingTab = "clients" | "targets" | "finance";
 
@@ -37,6 +42,8 @@ export type FundraisingClientDraft = {
   targetRaiseCurrency: string;
   retainerAmount: string;
   retainerCurrency: string;
+  retainerCadence: FundraisingRetainerCadence;
+  retainerNextBillingDate: string;
   materialsUrl: string;
   dataRoomUrl: string;
   notes: string;
@@ -74,9 +81,12 @@ export type FundraisingViewProps = {
   dataMode: "demo" | "supabase";
   currentUserName: string;
   onOpenCompany: (companyId: string) => void;
+  onOpenCompanyPage: (companyId: string, clientId: string) => void;
   onOpenAccounting: (companyId: string) => void;
   onAddCreatedCompany: (companyId: string, name: string, websites: string, country: string, category: string) => void;
   onAddCreatedPerson: (companyId: string | null, personId: string, displayName: string, email: string, jobTitle: string) => void;
+  queuePendingRecord: (record: PendingChangeRecord) => void;
+  discardPendingChange: (key: string, label?: string) => void;
 };
 
 export const FUNDRAISING_CLIENT_STAGE_LABELS: Record<FundraisingClientStage, string> = {
@@ -130,6 +140,31 @@ export const TARGET_STAGE_COLORS: Record<FundraisingTargetStage, string> = {
 export const ACTIVE_FUNDRAISING_CLIENT_STAGES = new Set<FundraisingClientStage>([
   "signed", "onboarding", "materials", "investor_outreach", "meetings", "term_sheet", "closing",
 ]);
+
+export const RETENTION_PERIOD_STATUS_LABELS: Record<FundraisingRetainerPeriodStatus, string> = {
+  pending: "Pending",
+  invoiced: "Invoiced",
+  paid: "Paid",
+  overdue: "Overdue",
+  cancelled: "Cancelled",
+};
+
+export const RETENTION_PERIOD_STATUS_COLORS: Record<FundraisingRetainerPeriodStatus, string> = {
+  pending: "#6b7280",
+  invoiced: "#0891b2",
+  paid: "#16a34a",
+  overdue: "#dc2626",
+  cancelled: "#6b7280",
+};
+
+function inferRetainerCadence(schedule: string | null): FundraisingRetainerCadence | null {
+  const normalized = schedule?.toLowerCase() ?? "";
+  if (normalized.includes("quarter")) return "quarterly";
+  if (normalized.includes("semi")) return "semiannual";
+  if (normalized.includes("annual") || normalized.includes("year")) return "annual";
+  if (normalized.includes("month")) return "monthly";
+  return null;
+}
 
 export const CONTACTED_TARGET_STAGES = new Set<FundraisingTargetStage>([
   "contacted", "replied", "meeting", "diligence", "soft_commit", "closed",
@@ -199,6 +234,7 @@ export function defaultFundraisingClientDraft(): FundraisingClientDraft {
     mandateName: "", stage: "signed", primaryContactPersonId: "", newPrimaryContactName: "",
     newPrimaryContactEmail: "", newPrimaryContactJobTitle: "", signedOn: todayIsoDate(),
     targetRaiseAmount: "", targetRaiseCurrency: "GBP", retainerAmount: "", retainerCurrency: "GBP",
+    retainerCadence: "monthly", retainerNextBillingDate: "",
     materialsUrl: "", dataRoomUrl: "", notes: "",
   };
 }
@@ -226,6 +262,8 @@ export function fundraisingClientDraftFromClient(client: FundraisingClient): Fun
     targetRaiseCurrency: client.targetRaiseCurrency ?? "GBP",
     retainerAmount: client.retainerAmountMinor == null ? "" : amountInputFromMinor(client.retainerAmountMinor),
     retainerCurrency: client.retainerCurrency ?? "GBP",
+    retainerCadence: client.retainerCadence ?? inferRetainerCadence(client.retainerSchedule) ?? "monthly",
+    retainerNextBillingDate: client.retainerNextBillingDate ?? "",
     materialsUrl: client.materialsUrl ?? "", dataRoomUrl: client.dataRoomUrl ?? "", notes: client.notes ?? "",
   };
 }
@@ -261,6 +299,9 @@ export function localFundraisingClientFromDraft(
     targetRaiseCurrency: amountMinor == null ? null : draft.targetRaiseCurrency.trim().toUpperCase(),
     retainerAmountMinor: retainerMinor,
     retainerCurrency: retainerMinor == null ? null : draft.retainerCurrency.trim().toUpperCase(),
+    retainerCadence: retainerMinor == null ? null : draft.retainerCadence,
+    retainerSchedule: retainerMinor == null ? null : RETAINER_CADENCE_LABELS[draft.retainerCadence],
+    retainerNextBillingDate: retainerMinor == null ? null : draft.retainerNextBillingDate || null,
     materialsUrl: draft.materialsUrl.trim() || null,
     dataRoomUrl: draft.dataRoomUrl.trim() || null,
     notes: draft.notes.trim() || null,

@@ -3,12 +3,6 @@
 import { useEffect, useDeferredValue, useMemo, useState } from "react";
 
 import {
-  deleteAccountingRecordAction,
-  saveAccountingDocumentAction,
-  saveAccountingLedgerEntryAction,
-  voidAccountingRecordAction,
-} from "@/app/actions";
-import {
   ACCOUNTING_DIRECTION_LABELS,
   ACCOUNTING_DOCUMENT_STATUS_LABELS,
   ACCOUNTING_DOCUMENT_TYPE_LABELS,
@@ -26,6 +20,7 @@ import {
 } from "@/components/views/accounting/accounting-view";
 import type {
   AccountingRecordActionTarget,
+  PendingChangeRecord,
   AccountingTab, ActiveView,
 } from "@/lib/crm-types";
 import {
@@ -33,6 +28,7 @@ import {
   emptyAccountingData,
   withAccountingSummaries,
 } from "@/lib/crm-utils";
+import { isLocalPendingId, isRemoteId } from "@/lib/pending-changes";
 import type {
   AccountingData,
   AccountingDocument,
@@ -48,6 +44,8 @@ type UseCrmAccountingOptions = {
   companies: Company[];
   companyNameById: Map<string, string>;
   setActiveView: React.Dispatch<React.SetStateAction<ActiveView>>;
+  queuePendingRecord: (record: PendingChangeRecord) => void;
+  discardPendingChange: (key: string, label?: string) => void;
 };
 
 export function useCrmAccounting(options: UseCrmAccountingOptions) {
@@ -58,6 +56,8 @@ export function useCrmAccounting(options: UseCrmAccountingOptions) {
     companies,
     companyNameById,
     setActiveView,
+    queuePendingRecord,
+    discardPendingChange,
   } = options;
 
   const [accountingTab, setAccountingTab] = useState<AccountingTab>("documents");
@@ -190,11 +190,21 @@ export function useCrmAccounting(options: UseCrmAccountingOptions) {
     );
   }
 
+  function accountingDocumentKey(documentId: string) {
+    return `accounting-document:${documentId}`;
+  }
+
+  function accountingLedgerEntryKey(entryId: string) {
+    return `accounting-ledger-entry:${entryId}`;
+  }
+
   function localAccountingDocumentFromDraft(draft: AccountingDocumentDraft, amountMinor: number): AccountingDocument {
     const now = new Date().toISOString();
     return {
       id: draft.documentId ?? `local-accounting-document-${Date.now()}`,
       companyId: draft.companyId || null,
+      fundraisingClientId: null,
+      retainerPeriodDate: null,
       documentType: draft.documentType,
       status: draft.status,
       title: draft.title.trim(),
@@ -212,6 +222,24 @@ export function useCrmAccounting(options: UseCrmAccountingOptions) {
       voidReason: null,
       createdAt: now,
       updatedAt: now,
+    };
+  }
+
+  function accountingDocumentPayloadFromDraft(draft: AccountingDocumentDraft, amountMinor: number, currency: string) {
+    return {
+      organizationId: process.env.NEXT_PUBLIC_DEFAULT_ORG_ID,
+      documentId: isRemoteId(draft.documentId) ? draft.documentId : undefined,
+      companyId: draft.companyId || null,
+      documentType: draft.documentType,
+      status: draft.status,
+      title: draft.title,
+      amountMinor,
+      currency,
+      issuedOn: draft.issuedOn || null,
+      dueOn: draft.dueOn || null,
+      externalReference: draft.externalReference || null,
+      documentUrl: draft.documentUrl || null,
+      notes: draft.notes || null,
     };
   }
 
@@ -239,6 +267,23 @@ export function useCrmAccounting(options: UseCrmAccountingOptions) {
     };
   }
 
+  function accountingLedgerPayloadFromDraft(draft: AccountingLedgerDraft, amountMinor: number, currency: string) {
+    return {
+      organizationId: process.env.NEXT_PUBLIC_DEFAULT_ORG_ID,
+      entryId: isRemoteId(draft.entryId) ? draft.entryId : undefined,
+      documentId: draft.documentId || null,
+      companyId: draft.companyId || null,
+      entryType: draft.entryType,
+      direction: draft.direction,
+      amountMinor,
+      currency,
+      occurredOn: draft.occurredOn,
+      externalReference: draft.externalReference || null,
+      documentUrl: draft.documentUrl || null,
+      notes: draft.notes || null,
+    };
+  }
+
   async function saveAccountingDocument() {
     if (!initialData.accountingAccess.canEdit || isSavingAccounting) return;
     const amountMinor = parseMoneyInput(accountingDocumentDraft.amount);
@@ -260,6 +305,7 @@ export function useCrmAccounting(options: UseCrmAccountingOptions) {
     setIsSavingAccounting(true);
     setAccountingMessage(null);
     try {
+      const localDocument = localAccountingDocumentFromDraft(accountingDocumentDraft, amountMinor);
       if (initialData.dataMode === "supabase") {
         const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
         if (!organizationId) {
@@ -267,30 +313,20 @@ export function useCrmAccounting(options: UseCrmAccountingOptions) {
           return;
         }
 
-        const result = await saveAccountingDocumentAction({
-          organizationId,
-          documentId: accountingDocumentDraft.documentId ?? undefined,
-          companyId: accountingDocumentDraft.companyId || null,
-          documentType: accountingDocumentDraft.documentType,
-          status: accountingDocumentDraft.status,
-          title: accountingDocumentDraft.title,
-          amountMinor,
-          currency,
-          issuedOn: accountingDocumentDraft.issuedOn || null,
-          dueOn: accountingDocumentDraft.dueOn || null,
-          externalReference: accountingDocumentDraft.externalReference || null,
-          documentUrl: accountingDocumentDraft.documentUrl || null,
-          notes: accountingDocumentDraft.notes || null,
+        updateAccountingDocumentLocally(localDocument);
+        queuePendingRecord({
+          kind: "accounting-document-save",
+          key: accountingDocumentKey(localDocument.id),
+          label: accountingDocumentDraft.documentId ? `Update accounting document "${localDocument.title}"` : `Create accounting document "${localDocument.title}"`,
+          localId: localDocument.id,
+          payload: accountingDocumentPayloadFromDraft(accountingDocumentDraft, amountMinor, currency),
         });
-        setAccountingMessage(result.message);
-        if (result.ok && result.document) {
-          updateAccountingDocumentLocally(result.document);
-          setAccountingDocumentDraft(defaultAccountingDocumentDraft());
-        }
+        setAccountingDocumentDraft(defaultAccountingDocumentDraft());
+        setAccountingMessage("Accounting document queued locally.");
         return;
       }
 
-      updateAccountingDocumentLocally(localAccountingDocumentFromDraft(accountingDocumentDraft, amountMinor));
+      updateAccountingDocumentLocally(localDocument);
       setAccountingDocumentDraft(defaultAccountingDocumentDraft());
       setAccountingMessage("Demo accounting document saved locally.");
     } finally {
@@ -322,6 +358,7 @@ export function useCrmAccounting(options: UseCrmAccountingOptions) {
     setAccountingMessage(null);
     try {
       const draft = { ...accountingLedgerDraft, companyId, currency };
+      const localEntry = localAccountingLedgerEntryFromDraft(draft, amountMinor);
       if (initialData.dataMode === "supabase") {
         const organizationId = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID;
         if (!organizationId) {
@@ -329,29 +366,20 @@ export function useCrmAccounting(options: UseCrmAccountingOptions) {
           return;
         }
 
-        const result = await saveAccountingLedgerEntryAction({
-          organizationId,
-          entryId: draft.entryId ?? undefined,
-          documentId: draft.documentId || null,
-          companyId: draft.companyId || null,
-          entryType: draft.entryType,
-          direction: draft.direction,
-          amountMinor,
-          currency,
-          occurredOn: draft.occurredOn,
-          externalReference: draft.externalReference || null,
-          documentUrl: draft.documentUrl || null,
-          notes: draft.notes || null,
+        updateAccountingLedgerEntryLocally(localEntry);
+        queuePendingRecord({
+          kind: "accounting-ledger-entry-save",
+          key: accountingLedgerEntryKey(localEntry.id),
+          label: draft.entryId ? "Update accounting ledger entry" : "Create accounting ledger entry",
+          localId: localEntry.id,
+          payload: accountingLedgerPayloadFromDraft(draft, amountMinor, currency),
         });
-        setAccountingMessage(result.message);
-        if (result.ok && result.entry) {
-          updateAccountingLedgerEntryLocally(result.entry);
-          setAccountingLedgerDraft(defaultAccountingLedgerDraft());
-        }
+        setAccountingLedgerDraft(defaultAccountingLedgerDraft());
+        setAccountingMessage("Ledger entry queued locally.");
         return;
       }
 
-      updateAccountingLedgerEntryLocally(localAccountingLedgerEntryFromDraft(draft, amountMinor));
+      updateAccountingLedgerEntryLocally(localEntry);
       setAccountingLedgerDraft(defaultAccountingLedgerDraft());
       setAccountingMessage("Demo ledger entry saved locally.");
     } finally {
@@ -420,10 +448,28 @@ export function useCrmAccounting(options: UseCrmAccountingOptions) {
         return false;
       }
 
-      const result = await voidAccountingRecordAction({ organizationId, entityType: "document", id: document.id, reason: voidReason });
-      setAccountingMessage(result.message);
-      if (result.ok && result.document) updateAccountingDocumentLocally(result.document);
-      return result.ok;
+      updateAccountingDocumentLocally({
+        ...document,
+        status: "void",
+        voidedAt: new Date().toISOString(),
+        voidReason,
+        updatedAt: new Date().toISOString(),
+      });
+      if (isLocalPendingId(document.id)) {
+        discardPendingChange(accountingDocumentKey(document.id), "Local accounting document");
+      } else {
+        queuePendingRecord({
+          kind: "accounting-record-action",
+          key: accountingDocumentKey(document.id),
+          label: `Void accounting document "${document.title}"`,
+          action: "void",
+          entityType: "document",
+          id: document.id,
+          reason: voidReason,
+        });
+      }
+      setAccountingMessage("Accounting document void queued locally.");
+      return true;
     }
 
     updateAccountingDocumentLocally({
@@ -449,10 +495,27 @@ export function useCrmAccounting(options: UseCrmAccountingOptions) {
         return false;
       }
 
-      const result = await voidAccountingRecordAction({ organizationId, entityType: "ledger_entry", id: entry.id, reason: voidReason });
-      setAccountingMessage(result.message);
-      if (result.ok && result.entry) updateAccountingLedgerEntryLocally(result.entry);
-      return result.ok;
+      updateAccountingLedgerEntryLocally({
+        ...entry,
+        voidedAt: new Date().toISOString(),
+        voidReason,
+        updatedAt: new Date().toISOString(),
+      });
+      if (isLocalPendingId(entry.id)) {
+        discardPendingChange(accountingLedgerEntryKey(entry.id), "Local ledger entry");
+      } else {
+        queuePendingRecord({
+          kind: "accounting-record-action",
+          key: accountingLedgerEntryKey(entry.id),
+          label: "Void accounting ledger entry",
+          action: "void",
+          entityType: "ledger_entry",
+          id: entry.id,
+          reason: voidReason,
+        });
+      }
+      setAccountingMessage("Ledger entry void queued locally.");
+      return true;
     }
 
     updateAccountingLedgerEntryLocally({
@@ -477,14 +540,24 @@ export function useCrmAccounting(options: UseCrmAccountingOptions) {
         return false;
       }
 
-      const result = await deleteAccountingRecordAction({ organizationId, entityType: "document", id: document.id, reason: deleteReason });
-      setAccountingMessage(result.message);
-      if (result.ok) {
-        deleteAccountingDocumentLocally(document.id);
-        if (accountingDocumentDraft.documentId === document.id) setAccountingDocumentDraft(defaultAccountingDocumentDraft());
-        if (accountingLedgerDraft.documentId === document.id) setAccountingLedgerDraft((current) => ({ ...current, documentId: "" }));
+      deleteAccountingDocumentLocally(document.id);
+      if (accountingDocumentDraft.documentId === document.id) setAccountingDocumentDraft(defaultAccountingDocumentDraft());
+      if (accountingLedgerDraft.documentId === document.id) setAccountingLedgerDraft((current) => ({ ...current, documentId: "" }));
+      if (isLocalPendingId(document.id)) {
+        discardPendingChange(accountingDocumentKey(document.id), "Local accounting document");
+      } else {
+        queuePendingRecord({
+          kind: "accounting-record-action",
+          key: accountingDocumentKey(document.id),
+          label: `Delete accounting document "${document.title}"`,
+          action: "delete",
+          entityType: "document",
+          id: document.id,
+          reason: deleteReason,
+        });
       }
-      return result.ok;
+      setAccountingMessage("Accounting document delete queued locally.");
+      return true;
     }
 
     deleteAccountingDocumentLocally(document.id);
@@ -506,13 +579,23 @@ export function useCrmAccounting(options: UseCrmAccountingOptions) {
         return false;
       }
 
-      const result = await deleteAccountingRecordAction({ organizationId, entityType: "ledger_entry", id: entry.id, reason: deleteReason });
-      setAccountingMessage(result.message);
-      if (result.ok) {
-        deleteAccountingLedgerEntryLocally(entry.id);
-        if (accountingLedgerDraft.entryId === entry.id) setAccountingLedgerDraft(defaultAccountingLedgerDraft());
+      deleteAccountingLedgerEntryLocally(entry.id);
+      if (accountingLedgerDraft.entryId === entry.id) setAccountingLedgerDraft(defaultAccountingLedgerDraft());
+      if (isLocalPendingId(entry.id)) {
+        discardPendingChange(accountingLedgerEntryKey(entry.id), "Local ledger entry");
+      } else {
+        queuePendingRecord({
+          kind: "accounting-record-action",
+          key: accountingLedgerEntryKey(entry.id),
+          label: "Delete accounting ledger entry",
+          action: "delete",
+          entityType: "ledger_entry",
+          id: entry.id,
+          reason: deleteReason,
+        });
       }
-      return result.ok;
+      setAccountingMessage("Ledger entry delete queued locally.");
+      return true;
     }
 
     deleteAccountingLedgerEntryLocally(entry.id);

@@ -1,5 +1,6 @@
 import { buildAccountingSummaries } from "@/lib/accounting";
 import { withFundraisingSummaries } from "@/lib/fundraising";
+import { buildRetainerPeriodsFromAccountingDocuments } from "@/lib/retainer-forecast";
 import type { AccountingDocument, AccountingLedgerEntry, Company, DashboardData, FundraisingClient, FundraisingClientTarget, InvestmentRelationship, Tag, Task } from "@/lib/types";
 
 const tags: Tag[] = [
@@ -259,6 +260,8 @@ const accountingDocuments: AccountingDocument[] = [
   {
     id: "accounting-doc-retainer-ms",
     companyId: "company-morgan-stanley",
+    fundraisingClientId: "client-ms-raise",
+    retainerPeriodDate: "2026-04-15",
     documentType: "retainer",
     status: "partially_paid",
     title: "Monthly fundraising retainer",
@@ -280,6 +283,8 @@ const accountingDocuments: AccountingDocument[] = [
   {
     id: "accounting-doc-commission-gs",
     companyId: "company-goldman",
+    fundraisingClientId: null,
+    retainerPeriodDate: null,
     documentType: "commission",
     status: "open",
     title: "Success commission",
@@ -301,6 +306,8 @@ const accountingDocuments: AccountingDocument[] = [
   {
     id: "accounting-doc-expense-travel",
     companyId: "company-alphasights",
+    fundraisingClientId: null,
+    retainerPeriodDate: null,
     documentType: "expense",
     status: "paid",
     title: "Client meeting travel",
@@ -375,6 +382,9 @@ const fundraisingClients: FundraisingClient[] = [
     targetRaiseCurrency: "GBP",
     retainerAmountMinor: 50000000,
     retainerCurrency: "GBP",
+    retainerCadence: "monthly",
+    retainerSchedule: "Monthly on 15th",
+    retainerNextBillingDate: "2026-05-15",
     materialsUrl: null,
     dataRoomUrl: null,
     notes: "Demo signed client mandate with active investor outreach.",
@@ -395,6 +405,9 @@ const fundraisingClients: FundraisingClient[] = [
     targetRaiseCurrency: "USD",
     retainerAmountMinor: null,
     retainerCurrency: null,
+    retainerCadence: null,
+    retainerSchedule: null,
+    retainerNextBillingDate: null,
     materialsUrl: null,
     dataRoomUrl: null,
     notes: "Demo client with investor meetings underway.",
@@ -496,7 +509,11 @@ export const mockDashboardData: DashboardData = {
     role: "admin",
   },
   accounting: accountingData,
-  clientDashboard: withFundraisingSummaries({ clients: fundraisingClients, targets: fundraisingTargets }, accountingData),
+  clientDashboard: withFundraisingSummaries({
+    clients: fundraisingClients,
+    targets: fundraisingTargets,
+    retainerPeriods: buildRetainerPeriodsFromAccountingDocuments(accountingDocuments, "2026-04-20"),
+  }, accountingData),
   authMode: "demo",
   dataMode: "demo",
   localEnrichmentEnabled: false,

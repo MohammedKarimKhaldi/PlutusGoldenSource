@@ -3,6 +3,7 @@ import { ChevronDown, Download, Filter, FlaskConical, GitMerge, Plus, RefreshCw,
 import type { ContactExportCriterion } from "@/lib/export/contacts";
 import { CONTACT_EXPORT_LABELS } from "@/lib/export/contacts";
 import type { Company, InvestmentRelationship, OutreachStage, Person } from "@/lib/types";
+import type { FundraisingCompanyProfile } from "@/lib/fundraising-company-profile";
 import type { EnrichmentDraft, InvestmentDraft } from "@/components/shared";
 import { OUTREACH_STAGES } from "@/lib/types";
 import {
@@ -59,6 +60,8 @@ export type CompaniesViewProps = {
   activeCompanyEnrichmentDraft: EnrichmentDraft | null;
   activeCompanyInvestment: InvestmentRelationship | null;
   activeCompanyInvestmentDraft: InvestmentDraft | null;
+  fundraisingCompanyProfile: FundraisingCompanyProfile | null;
+  accountingCanView: boolean;
   enrichmentMessage: string | null;
   setEnrichmentDraft: React.Dispatch<React.SetStateAction<EnrichmentDraft | null>>;
   setCompanyDraft: React.Dispatch<React.SetStateAction<{ companyId: string; name: string; websites: string; description: string; country: string }>>;
@@ -105,6 +108,7 @@ export type CompaniesViewProps = {
   onAddInvestmentDealLocally: (relationship: InvestmentRelationship, draft: InvestmentDraft, label: string) => void;
   onToggleHighlight: (companyId: string, person: Person) => void;
   onAddManualNote: () => void;
+  onSelectFundraisingClient: (clientId: string) => void;
   onSetCompanyInvestmentDraft: React.Dispatch<React.SetStateAction<InvestmentDraft | null>>;
   startPersonEdit: (person: Person) => void;
   pushPendingEnrichments: () => void;
@@ -150,6 +154,8 @@ export function CompaniesView(props: CompaniesViewProps) {
     activeCompanyEnrichmentDraft,
     activeCompanyInvestment,
     activeCompanyInvestmentDraft,
+    fundraisingCompanyProfile,
+    accountingCanView,
     enrichmentMessage,
     setEnrichmentDraft,
     setCompanyDraft,
@@ -196,6 +202,7 @@ export function CompaniesView(props: CompaniesViewProps) {
     onAddInvestmentDealLocally,
     onToggleHighlight,
     onAddManualNote,
+    onSelectFundraisingClient,
     onSetCompanyInvestmentDraft,
     startPersonEdit,
     pushPendingEnrichments,
@@ -501,6 +508,9 @@ export function CompaniesView(props: CompaniesViewProps) {
         saveActiveCompanyEnrichment={onSaveActiveCompanyEnrichment}
         activeCompanyInvestment={activeCompanyInvestment}
         activeCompanyInvestmentDraft={activeCompanyInvestmentDraft}
+        fundraisingCompanyProfile={fundraisingCompanyProfile}
+        accountingCanView={accountingCanView}
+        onSelectFundraisingClient={onSelectFundraisingClient}
         setCompanyInvestmentDraft={onSetCompanyInvestmentDraft}
         saveInvestmentRelationship={onSaveInvestmentRelationship}
         addInvestmentDealLocally={onAddInvestmentDealLocally}

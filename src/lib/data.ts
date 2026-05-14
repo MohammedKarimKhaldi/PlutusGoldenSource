@@ -7,6 +7,7 @@ import { normalizeCompanyWebsites } from "@/lib/company-websites";
 import { localEnrichmentEnabled } from "@/lib/enrichment-config";
 import { emptyClientDashboardData, withFundraisingSummaries } from "@/lib/fundraising";
 import { mockDashboardData } from "@/lib/mock-data";
+import { buildRetainerPeriodsFromAccountingDocuments } from "@/lib/retainer-forecast";
 import { normalizePersonName } from "@/lib/import/normalization";
 import { createSupabaseServerClient, hasSupabaseBrowserConfig } from "@/lib/supabase/server";
 import type {
@@ -35,7 +36,7 @@ type SupabaseError = { code?: string; details?: string | null; message: string }
 type SupabasePage<T> = PromiseLike<{ data: T[] | null; error: SupabaseError | null }>;
 
 const PAGE_SIZE = 1000;
-const DASHBOARD_CACHE_VERSION = 5;
+const DASHBOARD_CACHE_VERSION = 6;
 const DASHBOARD_CACHE_REVALIDATE_MS = 5 * 60 * 1000;
 const DASHBOARD_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const dashboardMemoryCache = new Map<string, { savedAt: number; data: DashboardData }>();
@@ -172,6 +173,8 @@ type AccountingMemberRow = {
 type AccountingDocumentRow = {
   id: string;
   company_id: string | null;
+  fundraising_client_id: string | null;
+  retainer_period_date: string | null;
   document_type: AccountingDocument["documentType"];
   status: AccountingDocument["status"];
   title: string;
@@ -224,6 +227,9 @@ type FundraisingClientRow = {
   target_raise_currency: string | null;
   retainer_amount_minor: number | null;
   retainer_currency: string | null;
+  retainer_cadence: FundraisingClient["retainerCadence"];
+  retainer_schedule: string | null;
+  retainer_next_billing_date: string | null;
   materials_url: string | null;
   data_room_url: string | null;
   notes: string | null;
@@ -395,6 +401,8 @@ function mapAccountingDocument(row: AccountingDocumentRow): AccountingDocument {
   return {
     id: row.id,
     companyId: row.company_id,
+    fundraisingClientId: row.fundraising_client_id ?? null,
+    retainerPeriodDate: row.retainer_period_date ?? null,
     documentType: row.document_type,
     status: row.status,
     title: row.title,
@@ -451,6 +459,9 @@ function mapFundraisingClient(row: FundraisingClientRow): FundraisingClient {
     targetRaiseCurrency: row.target_raise_currency,
     retainerAmountMinor: row.retainer_amount_minor == null ? null : Number(row.retainer_amount_minor),
     retainerCurrency: row.retainer_currency,
+    retainerCadence: row.retainer_cadence ?? null,
+    retainerSchedule: row.retainer_schedule ?? null,
+    retainerNextBillingDate: row.retainer_next_billing_date ?? null,
     materialsUrl: row.materials_url,
     dataRoomUrl: row.data_room_url,
     notes: row.notes,
@@ -509,7 +520,7 @@ async function loadAccountingForUser(supabase: SupabaseServerClient, organizatio
       fetchPaged<AccountingDocumentRow>("accounting documents", (from, to) =>
         supabase
           .from("accounting_documents")
-          .select("id,company_id,document_type,status,title,amount_minor,currency,issued_on,due_on,external_reference,document_url,notes,created_by,updated_by,voided_at,voided_by,void_reason,created_at,updated_at")
+          .select("id,company_id,fundraising_client_id,retainer_period_date,document_type,status,title,amount_minor,currency,issued_on,due_on,external_reference,document_url,notes,created_by,updated_by,voided_at,voided_by,void_reason,created_at,updated_at")
           .eq("organization_id", organizationId)
           .order("issued_on", { ascending: false, nullsFirst: false })
           .order("created_at", { ascending: false })
@@ -548,7 +559,7 @@ async function loadClientDashboardForOrganization(supabase: SupabaseServerClient
       fetchPaged<FundraisingClientRow>("fundraising clients", (from, to) =>
         supabase
           .from("fundraising_clients")
-          .select("id,company_id,mandate_name,stage,owner_id,primary_contact_person_id,signed_on,target_raise_amount_minor,target_raise_currency,retainer_amount_minor,retainer_currency,materials_url,data_room_url,notes,created_by,updated_by,created_at,updated_at")
+          .select("id,company_id,mandate_name,stage,owner_id,primary_contact_person_id,signed_on,target_raise_amount_minor,target_raise_currency,retainer_amount_minor,retainer_currency,retainer_cadence,retainer_schedule,retainer_next_billing_date,materials_url,data_room_url,notes,created_by,updated_by,created_at,updated_at")
           .eq("organization_id", organizationId)
           .order("updated_at", { ascending: false })
           .range(from, to),
@@ -566,13 +577,14 @@ async function loadClientDashboardForOrganization(supabase: SupabaseServerClient
     return {
       clients: clientRows.map(mapFundraisingClient),
       targets: targetRows.map(mapFundraisingClientTarget),
+      retainerPeriods: [],
     };
   } catch (error) {
     const maybeSupabaseError = error as Error & { code?: string };
     if (!isMissingAccountingTable({ code: maybeSupabaseError.code, message: maybeSupabaseError.message })) {
       console.warn("Could not load fundraising client dashboard", error instanceof Error ? error.message : error);
     }
-    return { clients: [], targets: [] };
+    return { clients: [], targets: [], retainerPeriods: [] };
   }
 }
 
@@ -909,7 +921,15 @@ async function fetchDashboardDataFromSupabase({
     loadClientDashboardForOrganization(supabase, organizationId),
   ]);
   const importStats = rows.importStats;
-  const clientDashboard = withFundraisingSummaries(clientDashboardRows, accountingResult.accounting);
+  const clientDashboard = withFundraisingSummaries(
+    {
+      ...clientDashboardRows,
+      retainerPeriods: accountingResult.accounting
+        ? buildRetainerPeriodsFromAccountingDocuments(accountingResult.accounting.documents)
+        : [],
+    },
+    accountingResult.accounting,
+  );
 
   return {
     currentUserName,

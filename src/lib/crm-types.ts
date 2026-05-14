@@ -27,6 +27,7 @@ export type CrmShellProps = {
   initialData: DashboardData;
   authSuccess?: boolean;
   companyId?: string;
+  fundraisingClientId?: string;
   hideDetailPanel?: boolean;
   hideTable?: boolean;
   activeView?: ActiveView;
@@ -158,12 +159,65 @@ export type PendingChangeRecord =
       organizationId: string | null;
       targetPersonId: string;
       sourcePersonId: string;
+    }
+  | {
+      kind: "accounting-document-save";
+      key: string;
+      label: string;
+      localId: string;
+      payload: Record<string, unknown>;
+    }
+  | {
+      kind: "accounting-ledger-entry-save";
+      key: string;
+      label: string;
+      localId: string;
+      payload: Record<string, unknown>;
+    }
+  | {
+      kind: "accounting-record-action";
+      key: string;
+      label: string;
+      action: "void" | "delete";
+      entityType: "document" | "ledger_entry";
+      id: string;
+      reason: string;
+    }
+  | {
+      kind: "fundraising-client-save";
+      key: string;
+      label: string;
+      localId: string;
+      localCompanyId?: string | null;
+      localPrimaryContactPersonId?: string | null;
+      payload: Record<string, unknown>;
+    }
+  | {
+      kind: "fundraising-target-save";
+      key: string;
+      label: string;
+      localId: string;
+      localInvestorCompanyId?: string | null;
+      localInvestorPersonId?: string | null;
+      payload: Record<string, unknown>;
+    }
+  | {
+      kind: "fundraising-delete";
+      key: string;
+      label: string;
+      entityType: "client" | "target";
+      id: string;
     };
+
+export type PendingPushContext = {
+  resolveId: (id: string | null | undefined) => string | null;
+  rememberId: (localId: string | null | undefined, remoteId: string | null | undefined) => void;
+};
 
 export type PendingChange = {
   key: string;
   label: string;
-  run: () => Promise<ActionResult>;
+  run: (context: PendingPushContext) => Promise<ActionResult>;
   runBeforePersonBatch?: boolean;
   record: PendingChangeRecord;
   type?: "person";
