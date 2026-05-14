@@ -1,8 +1,8 @@
 import { CrmShell } from "@/components/crm-shell";
-import type { ActiveView } from "@/components/crm-shell";
+import type { ActiveView } from "@/lib/crm-types";
 import { getDashboardData } from "@/lib/data";
 
-const ACTIVE_VIEWS: ActiveView[] = ["companies", "people", "tags", "pipeline", "tasks", "import"];
+const ACTIVE_VIEWS: ActiveView[] = ["companies", "people", "tags", "pipeline", "clients", "tasks", "import", "accounting"];
 
 function activeViewFromParam(value?: string): ActiveView {
   return ACTIVE_VIEWS.includes(value as ActiveView) ? (value as ActiveView) : "companies";

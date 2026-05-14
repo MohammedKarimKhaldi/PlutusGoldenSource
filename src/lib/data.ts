@@ -2,24 +2,52 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { buildAccountingSummaries } from "@/lib/accounting";
 import { normalizeCompanyWebsites } from "@/lib/company-websites";
 import { localEnrichmentEnabled } from "@/lib/enrichment-config";
+import { emptyClientDashboardData, withFundraisingSummaries } from "@/lib/fundraising";
 import { mockDashboardData } from "@/lib/mock-data";
+import { buildRetainerPeriodsFromAccountingDocuments } from "@/lib/retainer-forecast";
 import { normalizePersonName } from "@/lib/import/normalization";
 import { createSupabaseServerClient, hasSupabaseBrowserConfig } from "@/lib/supabase/server";
-import type { Activity, Company, CompanyEnrichment, DashboardData, ImportSummary, InvestmentDeal, InvestmentRelationship, Person, Tag, Task } from "@/lib/types";
+import type {
+  AccountingAccess,
+  AccountingData,
+  AccountingDocument,
+  AccountingLedgerEntry,
+  AccountingRole,
+  Activity,
+  Company,
+  CompanyEnrichment,
+  ClientDashboardData,
+  DashboardData,
+  FundraisingClient,
+  FundraisingClientTarget,
+  ImportSummary,
+  InvestmentDeal,
+  InvestmentRelationship,
+  Person,
+  Tag,
+  Task,
+} from "@/lib/types";
 
 type SupabaseServerClient = NonNullable<Awaited<ReturnType<typeof createSupabaseServerClient>>>;
 type SupabaseError = { code?: string; details?: string | null; message: string };
 type SupabasePage<T> = PromiseLike<{ data: T[] | null; error: SupabaseError | null }>;
 
 const PAGE_SIZE = 1000;
-const DASHBOARD_CACHE_VERSION = 3;
+const DASHBOARD_CACHE_VERSION = 6;
 const DASHBOARD_CACHE_REVALIDATE_MS = 5 * 60 * 1000;
 const DASHBOARD_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const dashboardMemoryCache = new Map<string, { savedAt: number; data: DashboardData }>();
 const dashboardRefreshes = new Set<string>();
 const dashboardCacheDir = join(process.cwd(), ".next", "cache", "golden-source-dashboard");
+const NO_ACCOUNTING_ACCESS: AccountingAccess = {
+  canView: false,
+  canEdit: false,
+  canAdmin: false,
+  role: null,
+};
 
 type StoredDashboardCache = {
   version: number;
@@ -55,6 +83,8 @@ type CompanyTagRow = {
 type PersonRelation = {
   id: string;
   display_name: string;
+  first_name?: string | null;
+  last_name?: string | null;
   linkedin_url: string | null;
   job_title: string | null;
   phone_numbers: string | null;
@@ -134,6 +164,101 @@ type InvestmentDealParticipantRow = {
   role: string | null;
   notes: string | null;
   investment_deals: InvestmentDealRelation | InvestmentDealRelation[] | null;
+};
+
+type AccountingMemberRow = {
+  role: AccountingRole;
+};
+
+type AccountingDocumentRow = {
+  id: string;
+  company_id: string | null;
+  fundraising_client_id: string | null;
+  retainer_period_date: string | null;
+  document_type: AccountingDocument["documentType"];
+  status: AccountingDocument["status"];
+  title: string;
+  amount_minor: number;
+  currency: string;
+  issued_on: string | null;
+  due_on: string | null;
+  external_reference: string | null;
+  document_url: string | null;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  voided_at: string | null;
+  voided_by: string | null;
+  void_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type AccountingLedgerEntryRow = {
+  id: string;
+  document_id: string | null;
+  company_id: string | null;
+  entry_type: AccountingLedgerEntry["entryType"];
+  direction: AccountingLedgerEntry["direction"];
+  amount_minor: number;
+  currency: string;
+  occurred_on: string;
+  external_reference: string | null;
+  document_url: string | null;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  voided_at: string | null;
+  voided_by: string | null;
+  void_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type FundraisingClientRow = {
+  id: string;
+  company_id: string;
+  mandate_name: string;
+  stage: FundraisingClient["stage"];
+  owner_id: string | null;
+  primary_contact_person_id: string | null;
+  signed_on: string | null;
+  target_raise_amount_minor: number | null;
+  target_raise_currency: string | null;
+  retainer_amount_minor: number | null;
+  retainer_currency: string | null;
+  retainer_cadence: FundraisingClient["retainerCadence"];
+  retainer_schedule: string | null;
+  retainer_next_billing_date: string | null;
+  materials_url: string | null;
+  data_room_url: string | null;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type FundraisingClientTargetRow = {
+  id: string;
+  client_id: string;
+  investor_company_id: string | null;
+  investor_person_id: string | null;
+  investor_name: string;
+  investor_email: string | null;
+  investor_type: string | null;
+  ticket_size_min_minor: number | null;
+  ticket_size_max_minor: number | null;
+  ticket_size_currency: string | null;
+  stage: FundraisingClientTarget["stage"];
+  owner_id: string | null;
+  last_contacted_at: string | null;
+  next_step: string | null;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 type DashboardRows = {
@@ -257,6 +382,210 @@ function mapCompanyEnrichment(row: CompanyEnrichmentRow): CompanyEnrichment {
     reviewedAt: row.reviewed_at,
     updatedAt: row.updated_at,
   };
+}
+
+function accountingAccessFromRole(role: AccountingRole | null): AccountingAccess {
+  return {
+    canView: Boolean(role),
+    canEdit: role === "editor" || role === "admin",
+    canAdmin: role === "admin",
+    role,
+  };
+}
+
+function isMissingAccountingTable(error: Pick<SupabaseError, "code"> & { message?: string }) {
+  return error.code === "42P01" || error.code === "PGRST205" || Boolean(error.message?.includes("42P01") || error.message?.includes("PGRST205"));
+}
+
+function mapAccountingDocument(row: AccountingDocumentRow): AccountingDocument {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    fundraisingClientId: row.fundraising_client_id ?? null,
+    retainerPeriodDate: row.retainer_period_date ?? null,
+    documentType: row.document_type,
+    status: row.status,
+    title: row.title,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency,
+    issuedOn: row.issued_on,
+    dueOn: row.due_on,
+    externalReference: row.external_reference,
+    documentUrl: row.document_url,
+    notes: row.notes,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+    voidedAt: row.voided_at,
+    voidedBy: row.voided_by,
+    voidReason: row.void_reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapAccountingLedgerEntry(row: AccountingLedgerEntryRow): AccountingLedgerEntry {
+  return {
+    id: row.id,
+    documentId: row.document_id,
+    companyId: row.company_id,
+    entryType: row.entry_type,
+    direction: row.direction,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency,
+    occurredOn: row.occurred_on,
+    externalReference: row.external_reference,
+    documentUrl: row.document_url,
+    notes: row.notes,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+    voidedAt: row.voided_at,
+    voidedBy: row.voided_by,
+    voidReason: row.void_reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapFundraisingClient(row: FundraisingClientRow): FundraisingClient {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    mandateName: row.mandate_name,
+    stage: row.stage,
+    ownerId: row.owner_id,
+    primaryContactPersonId: row.primary_contact_person_id,
+    signedOn: row.signed_on,
+    targetRaiseAmountMinor: row.target_raise_amount_minor == null ? null : Number(row.target_raise_amount_minor),
+    targetRaiseCurrency: row.target_raise_currency,
+    retainerAmountMinor: row.retainer_amount_minor == null ? null : Number(row.retainer_amount_minor),
+    retainerCurrency: row.retainer_currency,
+    retainerCadence: row.retainer_cadence ?? null,
+    retainerSchedule: row.retainer_schedule ?? null,
+    retainerNextBillingDate: row.retainer_next_billing_date ?? null,
+    materialsUrl: row.materials_url,
+    dataRoomUrl: row.data_room_url,
+    notes: row.notes,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapFundraisingClientTarget(row: FundraisingClientTargetRow): FundraisingClientTarget {
+  return {
+    id: row.id,
+    clientId: row.client_id,
+    investorCompanyId: row.investor_company_id,
+    investorPersonId: row.investor_person_id,
+    investorName: row.investor_name,
+    investorEmail: row.investor_email,
+    investorType: row.investor_type,
+    ticketSizeMinMinor: row.ticket_size_min_minor == null ? null : Number(row.ticket_size_min_minor),
+    ticketSizeMaxMinor: row.ticket_size_max_minor == null ? null : Number(row.ticket_size_max_minor),
+    ticketSizeCurrency: row.ticket_size_currency,
+    stage: row.stage,
+    ownerId: row.owner_id,
+    lastContactedAt: row.last_contacted_at,
+    nextStep: row.next_step,
+    notes: row.notes,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function loadAccountingForUser(supabase: SupabaseServerClient, organizationId: string, userId: string): Promise<{ access: AccountingAccess; accounting: AccountingData | null }> {
+  const memberResult = await supabase
+    .from("accounting_members")
+    .select("role")
+    .eq("organization_id", organizationId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (memberResult.error) {
+    if (!isMissingAccountingTable(memberResult.error)) {
+      console.warn("Could not load accounting access", memberResult.error.message);
+    }
+    return { access: NO_ACCOUNTING_ACCESS, accounting: null };
+  }
+
+  const role = (memberResult.data as AccountingMemberRow | null)?.role ?? null;
+  const access = accountingAccessFromRole(role);
+  if (!access.canView) return { access, accounting: null };
+
+  try {
+    const [documentRows, ledgerRows] = await Promise.all([
+      fetchPaged<AccountingDocumentRow>("accounting documents", (from, to) =>
+        supabase
+          .from("accounting_documents")
+          .select("id,company_id,fundraising_client_id,retainer_period_date,document_type,status,title,amount_minor,currency,issued_on,due_on,external_reference,document_url,notes,created_by,updated_by,voided_at,voided_by,void_reason,created_at,updated_at")
+          .eq("organization_id", organizationId)
+          .order("issued_on", { ascending: false, nullsFirst: false })
+          .order("created_at", { ascending: false })
+          .range(from, to),
+      ),
+      fetchPaged<AccountingLedgerEntryRow>("accounting ledger entries", (from, to) =>
+        supabase
+          .from("accounting_ledger_entries")
+          .select("id,document_id,company_id,entry_type,direction,amount_minor,currency,occurred_on,external_reference,document_url,notes,created_by,updated_by,voided_at,voided_by,void_reason,created_at,updated_at")
+          .eq("organization_id", organizationId)
+          .order("occurred_on", { ascending: false })
+          .order("created_at", { ascending: false })
+          .range(from, to),
+      ),
+    ]);
+
+    const documents = documentRows.map(mapAccountingDocument);
+    const ledgerEntries = ledgerRows.map(mapAccountingLedgerEntry);
+    return {
+      access,
+      accounting: {
+        documents,
+        ledgerEntries,
+        summaries: buildAccountingSummaries(documents, ledgerEntries),
+      },
+    };
+  } catch (error) {
+    console.warn("Could not load accounting data", error instanceof Error ? error.message : error);
+    return { access, accounting: { documents: [], ledgerEntries: [], summaries: [] } };
+  }
+}
+
+async function loadClientDashboardForOrganization(supabase: SupabaseServerClient, organizationId: string): Promise<Omit<ClientDashboardData, "summaries">> {
+  try {
+    const [clientRows, targetRows] = await Promise.all([
+      fetchPaged<FundraisingClientRow>("fundraising clients", (from, to) =>
+        supabase
+          .from("fundraising_clients")
+          .select("id,company_id,mandate_name,stage,owner_id,primary_contact_person_id,signed_on,target_raise_amount_minor,target_raise_currency,retainer_amount_minor,retainer_currency,retainer_cadence,retainer_schedule,retainer_next_billing_date,materials_url,data_room_url,notes,created_by,updated_by,created_at,updated_at")
+          .eq("organization_id", organizationId)
+          .order("updated_at", { ascending: false })
+          .range(from, to),
+      ),
+      fetchPaged<FundraisingClientTargetRow>("fundraising client targets", (from, to) =>
+        supabase
+          .from("fundraising_client_targets")
+          .select("id,client_id,investor_company_id,investor_person_id,investor_name,investor_email,investor_type,ticket_size_min_minor,ticket_size_max_minor,ticket_size_currency,stage,owner_id,last_contacted_at,next_step,notes,created_by,updated_by,created_at,updated_at")
+          .eq("organization_id", organizationId)
+          .order("updated_at", { ascending: false })
+          .range(from, to),
+      ),
+    ]);
+
+    return {
+      clients: clientRows.map(mapFundraisingClient),
+      targets: targetRows.map(mapFundraisingClientTarget),
+      retainerPeriods: [],
+    };
+  } catch (error) {
+    const maybeSupabaseError = error as Error & { code?: string };
+    if (!isMissingAccountingTable({ code: maybeSupabaseError.code, message: maybeSupabaseError.message })) {
+      console.warn("Could not load fundraising client dashboard", error instanceof Error ? error.message : error);
+    }
+    return { clients: [], targets: [], retainerPeriods: [] };
+  }
 }
 
 function buildInvestmentRelationships(rows: DashboardRows) {
@@ -413,6 +742,8 @@ function buildCompanies(rows: DashboardRows): Company[] {
             id: person.id,
             sourcePersonIds: [person.id],
             displayName: person.display_name,
+            firstName: person.first_name ?? null,
+            lastName: person.last_name ?? null,
             email: emails[0] ?? null,
             emails,
             phone: person.phone_numbers,
@@ -576,14 +907,29 @@ async function loadDashboardRows(supabase: SupabaseServerClient, organizationId:
 async function fetchDashboardDataFromSupabase({
   supabase,
   organizationId,
+  userId,
   currentUserName,
 }: {
   supabase: SupabaseServerClient;
   organizationId: string;
+  userId: string;
   currentUserName: string;
 }): Promise<DashboardData> {
-  const rows = await loadDashboardRows(supabase, organizationId);
+  const [rows, accountingResult, clientDashboardRows] = await Promise.all([
+    loadDashboardRows(supabase, organizationId),
+    loadAccountingForUser(supabase, organizationId, userId),
+    loadClientDashboardForOrganization(supabase, organizationId),
+  ]);
   const importStats = rows.importStats;
+  const clientDashboard = withFundraisingSummaries(
+    {
+      ...clientDashboardRows,
+      retainerPeriods: accountingResult.accounting
+        ? buildRetainerPeriodsFromAccountingDocuments(accountingResult.accounting.documents)
+        : [],
+    },
+    accountingResult.accounting,
+  );
 
   return {
     currentUserName,
@@ -593,6 +939,9 @@ async function fetchDashboardDataFromSupabase({
     companies: buildCompanies(rows),
     tags: rows.tags,
     tasks: rows.taskRows.map(mapTask),
+    accountingAccess: accountingResult.access,
+    accounting: accountingResult.accounting,
+    clientDashboard,
     importSummary: {
       totalRows: rows.importRowCount ?? importStats?.totalRows ?? 0,
       rawRows: importStats?.rawRows ?? 0,
@@ -609,17 +958,19 @@ function refreshDashboardCacheInBackground({
   cacheKey,
   supabase,
   organizationId,
+  userId,
   currentUserName,
 }: {
   cacheKey: string;
   supabase: SupabaseServerClient;
   organizationId: string;
+  userId: string;
   currentUserName: string;
 }) {
   if (dashboardRefreshes.has(cacheKey)) return;
   dashboardRefreshes.add(cacheKey);
 
-  void fetchDashboardDataFromSupabase({ supabase, organizationId, currentUserName })
+  void fetchDashboardDataFromSupabase({ supabase, organizationId, userId, currentUserName })
     .then((data) => writeDashboardCache(cacheKey, data))
     .catch((error) => {
       console.warn("Could not refresh dashboard cache", error instanceof Error ? error.message : error);
@@ -661,6 +1012,9 @@ export async function getDashboardData(): Promise<DashboardData> {
       authMode: "supabase",
       dataMode: "demo",
       localEnrichmentEnabled: localEnrichmentEnabled(),
+      accountingAccess: NO_ACCOUNTING_ACCESS,
+      accounting: null,
+      clientDashboard: emptyClientDashboardData(),
       currentUserName: user.email ?? "Signed in",
       dataWarning: "Add NEXT_PUBLIC_DEFAULT_ORG_ID to load Supabase contacts.",
     };
@@ -673,7 +1027,7 @@ export async function getDashboardData(): Promise<DashboardData> {
   if (cached) {
     const isFresh = Date.now() - cached.savedAt < DASHBOARD_CACHE_REVALIDATE_MS;
     if (!isFresh) {
-      refreshDashboardCacheInBackground({ cacheKey, supabase, organizationId, currentUserName });
+      refreshDashboardCacheInBackground({ cacheKey, supabase, organizationId, userId: user.id, currentUserName });
     }
 
     return {
@@ -685,7 +1039,7 @@ export async function getDashboardData(): Promise<DashboardData> {
   }
 
   try {
-    const data = await fetchDashboardDataFromSupabase({ supabase, organizationId, currentUserName });
+    const data = await fetchDashboardDataFromSupabase({ supabase, organizationId, userId: user.id, currentUserName });
     await writeDashboardCache(cacheKey, data);
     return data;
   } catch (error) {
@@ -697,6 +1051,9 @@ export async function getDashboardData(): Promise<DashboardData> {
       authMode: "supabase",
       dataMode: "demo",
       localEnrichmentEnabled: localEnrichmentEnabled(),
+      accountingAccess: NO_ACCOUNTING_ACCESS,
+      accounting: null,
+      clientDashboard: emptyClientDashboardData(),
       currentUserName: user.email ?? "Signed in",
       dataWarning: `Could not load Supabase contacts: ${message}`,
     };

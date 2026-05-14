@@ -300,6 +300,12 @@ h2 {
   background: var(--accent);
 }
 
+.primary-button.danger {
+  border-color: var(--danger);
+  color: #fff;
+  background: var(--danger);
+}
+
 .primary-button.compact,
 .secondary-button.compact,
 .text-button.compact {
@@ -734,6 +740,7 @@ h2 {
 }
 
 .select-filter select,
+.select-filter input,
 .bulkbar select {
   min-width: 108px;
   border: 0;
@@ -1441,6 +1448,10 @@ h2 {
   text-align: left;
 }
 
+.text-button.danger {
+  color: var(--danger);
+}
+
 .directory-actions {
   display: grid;
   gap: 6px;
@@ -1625,6 +1636,21 @@ button.contact-chip {
   border-radius: 8px;
   background: var(--surface);
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.24);
+}
+
+.accounting-void-dialog {
+  width: min(100%, 480px);
+}
+
+.accounting-void-summary {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.accounting-void-summary strong {
+  color: var(--text);
 }
 
 .contact-editor-form {
@@ -1865,6 +1891,577 @@ button.contact-chip {
   border-color: transparent;
   background: transparent;
   color: var(--accent);
+}
+
+.accounting-view {
+  align-content: start;
+}
+
+.accounting-role-pill,
+.accounting-status-pill,
+.accounting-direction-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.accounting-role-pill {
+  color: #0369a1;
+  background: #e0f2fe;
+}
+
+.accounting-role-pill.can-edit {
+  color: #047857;
+  background: #d1fae5;
+}
+
+.locked-panel {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 120px;
+  padding: 18px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  color: var(--muted-strong);
+  background: var(--surface-muted);
+}
+
+.locked-panel strong,
+.locked-panel span {
+  display: block;
+}
+
+.locked-panel span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.accounting-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.accounting-summary-card {
+  display: grid;
+  gap: 12px;
+  min-height: 142px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.accounting-summary-card > div {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.accounting-summary-card span,
+.accounting-summary-card dt,
+.accounting-summary-card.empty span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.accounting-summary-card strong {
+  color: var(--text);
+  font-size: 20px;
+}
+
+.accounting-summary-card dl {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.accounting-summary-card dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.accounting-summary-card dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.accounting-summary-card.empty {
+  align-content: center;
+}
+
+.accounting-toolbar,
+.accounting-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.accounting-tabs {
+  display: inline-flex;
+  min-height: 36px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.accounting-tabs button {
+  min-height: 28px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted-strong);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.accounting-tabs button.active {
+  color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.accounting-search {
+  max-width: 360px;
+}
+
+.accounting-date-filter input {
+  min-width: 128px;
+}
+
+.accounting-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.accounting-form {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.accounting-form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.accounting-form label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.accounting-form input,
+.accounting-form select,
+.accounting-form textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.accounting-form input,
+.accounting-form select {
+  min-height: 36px;
+  padding: 7px 9px;
+}
+
+.accounting-form textarea {
+  resize: vertical;
+  padding: 8px 9px;
+}
+
+.accounting-form-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  gap: 8px;
+}
+
+.accounting-table-wrap {
+  min-width: 0;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.accounting-table {
+  width: 100%;
+  min-width: 780px;
+  border-collapse: collapse;
+  background: var(--surface);
+}
+
+.accounting-table th,
+.accounting-table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  font-size: 13px;
+}
+
+.accounting-table th {
+  color: var(--muted);
+  background: var(--surface-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.accounting-table td strong,
+.accounting-table td span {
+  display: block;
+}
+
+.accounting-table td span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.accounting-table tr.voided {
+  color: var(--muted);
+  background: #f8fafc;
+}
+
+.accounting-row-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.accounting-status-pill.draft {
+  color: #475569;
+  background: #e2e8f0;
+}
+
+.accounting-status-pill.open,
+.accounting-status-pill.partially_paid {
+  color: #0369a1;
+  background: #e0f2fe;
+}
+
+.accounting-status-pill.paid,
+.accounting-direction-pill.incoming {
+  color: #047857;
+  background: #d1fae5;
+}
+
+.accounting-status-pill.void,
+.accounting-direction-pill.outgoing {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.fundraising-view {
+  align-content: start;
+}
+
+.fundraising-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.fundraising-summary-grid .locked-inline-card {
+  border-style: dashed;
+}
+
+.fundraising-toolbar {
+  justify-content: space-between;
+}
+
+.fundraising-grid {
+  display: grid;
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.fundraising-form {
+  max-height: calc(100vh - 140px);
+  overflow: auto;
+}
+
+.fundraising-client-list {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.fundraising-client-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.fundraising-client-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.fundraising-card-header,
+.fundraising-row-actions {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.fundraising-card-header > div {
+  min-width: 0;
+}
+
+.fundraising-card-header strong {
+  display: block;
+  color: var(--text);
+}
+
+.fundraising-card-header .text-button {
+  margin-top: 4px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--accent);
+}
+
+.fundraising-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.fundraising-card-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: var(--muted-strong);
+  background: var(--surface-muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.fundraising-row-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.fundraising-stage-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: #334155;
+  background: #e2e8f0;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.fundraising-stage-pill.signed,
+.fundraising-stage-pill.contact_started,
+.fundraising-stage-pill.contacted {
+  color: #0369a1;
+  background: #e0f2fe;
+}
+
+.fundraising-stage-pill.onboarding,
+.fundraising-stage-pill.materials,
+.fundraising-stage-pill.investor_outreach {
+  color: #6d28d9;
+  background: #ede9fe;
+}
+
+.fundraising-stage-pill.meetings,
+.fundraising-stage-pill.meeting,
+.fundraising-stage-pill.diligence,
+.fundraising-stage-pill.term_sheet,
+.fundraising-stage-pill.closing,
+.fundraising-stage-pill.soft_commit {
+  color: #a16207;
+  background: #fef3c7;
+}
+
+.fundraising-stage-pill.completed,
+.fundraising-stage-pill.closed,
+.fundraising-stage-pill.replied {
+  color: #047857;
+  background: #d1fae5;
+}
+
+.fundraising-stage-pill.paused,
+.fundraising-stage-pill.passed {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.fundraising-targets-table,
+.fundraising-finance-table {
+  align-self: stretch;
+}
+
+.fundraising-company-detail {
+  display: grid;
+  gap: 10px;
+}
+
+.fundraising-mandate-select {
+  width: min(100%, 360px);
+}
+
+.fundraising-company-summary,
+.fundraising-company-contact-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.fundraising-company-summary strong,
+.fundraising-company-contact-grid strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.fundraising-company-summary span,
+.fundraising-company-contact-grid span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.fundraising-company-contact-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.fundraising-company-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.fundraising-company-stat-grid.compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.fundraising-company-stat-grid > div {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.fundraising-company-stat-grid dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.fundraising-company-stat-grid dd {
+  margin: 3px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.fundraising-company-stat-grid span {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.fundraising-company-table-wrap {
+  margin-top: 2px;
+}
+
+.fundraising-company-table {
+  min-width: 700px;
+}
+
+.finance-heading {
+  margin-top: 4px;
+  margin-bottom: 0;
+}
+
+.retainer-period-list {
+  display: grid;
+  gap: 6px;
+}
+
+.retainer-period-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 34px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdff;
+  font-size: 12px;
+}
+
+.retainer-period-row strong {
+  color: var(--text);
+}
+
+.retainer-period-row span {
+  color: var(--muted-strong);
+  font-weight: 700;
 }
 
 .pipeline-card .deal-status-pill {
@@ -2230,6 +2827,374 @@ button.contact-chip {
   background: #e2e8f0;
 }
 
+.main-menu-item.emerald .main-menu-icon {
+  color: #047857;
+  background: #d1fae5;
+}
+
+.main-menu-item.rose .main-menu-icon {
+  color: #be123c;
+  background: #ffe4e6;
+}
+
+/* ── Drawer (slide-over panel) ── */
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.drawer-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 21;
+  width: min(100%, 520px);
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  background: var(--surface);
+  border-left: 1px solid var(--line-strong);
+  box-shadow: -8px 0 40px rgba(15, 23, 42, 0.12);
+  transform: translateX(100%);
+  transition: transform 200ms ease;
+}
+
+.drawer-panel.open {
+  transform: translateX(0);
+}
+
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.drawer-header h2 {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.drawer-body {
+  overflow: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+}
+
+.drawer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 18px 16px;
+  border-top: 1px solid var(--line);
+}
+
+/* ── Drawer form enhancements ── */
+
+.drawer-tabs {
+  display: flex;
+  min-height: 34px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  margin-bottom: 14px;
+  flex-shrink: 0;
+}
+
+.drawer-tabs button {
+  flex: 1;
+  min-height: 26px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted-strong);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.drawer-tabs button.active {
+  color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.drawer-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+}
+
+.drawer-form label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.drawer-form label:focus-within {
+  color: var(--accent);
+}
+
+.drawer-form input,
+.drawer-form select,
+.drawer-form textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.drawer-form input:focus,
+.drawer-form select:focus,
+.drawer-form textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(29, 78, 216, 0.12);
+}
+
+.drawer-form input,
+.drawer-form select {
+  min-height: 36px;
+  padding: 7px 9px;
+}
+
+.drawer-form textarea {
+  resize: vertical;
+  padding: 8px 9px;
+}
+
+.form-row-2col {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.drawer-section-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+
+.drawer-section-card-title {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted-strong);
+  margin: 0 0 2px;
+}
+
+.drawer-tab-content {
+  animation: fadeInUp 160ms ease both;
+}
+
+/* ── Drawer confirmation summary ── */
+
+.drawer-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: fadeInUp 160ms ease both;
+}
+
+.drawer-confirm-heading {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text);
+  margin: 0;
+}
+
+.drawer-confirm-section {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+
+.drawer-confirm-dl {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+}
+
+.drawer-confirm-dl > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.drawer-confirm-dl dt {
+  color: var(--muted);
+  font-weight: 650;
+  min-width: 80px;
+  flex-shrink: 0;
+}
+
+.drawer-confirm-dl dd {
+  margin: 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ── Retainer schedule display ── */
+
+.retainer-schedule-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-muted);
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.retainer-next-date {
+  display: inline-block;
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.retainer-period-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.retainer-overdue {
+  color: var(--danger) !important;
+}
+
+/* ── Fundraising view enhancements ── */
+
+.fundraising-view .view-surface-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.fundraising-loading {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fundraising-tab-content {
+  animation: fadeInUp 180ms ease both;
+}
+
+.fundraising-client-card {
+  transition: box-shadow 140ms ease, transform 140ms ease;
+}
+
+.fundraising-client-card:hover {
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.06);
+  transform: translateY(-1px);
+}
+
+/* ── Virtualized client list ── */
+
+.fundraising-virtual-list {
+  overflow: auto;
+  min-width: 0;
+}
+
+.fundraising-virtual-list > div {
+  position: relative;
+}
+
+.fundraising-virtual-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+
+/* ── Summary cards refresh ── */
+
+.fundraising-summary-card-modern .accounting-summary-card {
+  border-left: 3px solid var(--accent);
+}
+
+.fundraising-summary-card-modern .accounting-summary-card dl div:first-child dt {
+  color: var(--accent);
+}
+
+/* ── Filter improvements ── */
+
+.fundraising-active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.fundraising-filter-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.fundraising-filter-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
 @media (max-width: 1180px) {
   .app-shell {
     grid-template-columns: 72px minmax(0, 1fr);
@@ -2251,6 +3216,14 @@ button.contact-chip {
 
   .pipeline-board {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .accounting-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .fundraising-grid {
+    grid-template-columns: 1fr;
   }
 
   .detail-panel {
@@ -2285,7 +3258,7 @@ button.contact-chip {
   }
 
   .nav-list {
-    grid-template-columns: repeat(5, minmax(48px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(48px, 1fr));
   }
 
   .workspace {
@@ -2333,7 +3306,9 @@ button.contact-chip {
   .toolbar,
   .bulkbar,
   .exportbar,
-  .people-filterbar {
+  .people-filterbar,
+  .accounting-toolbar,
+  .accounting-filters {
     align-items: stretch;
   }
 
@@ -2345,8 +3320,20 @@ button.contact-chip {
   .compact-fields,
   .investment-grid,
   .editor-grid,
-  .editor-investment-grid {
+  .editor-investment-grid,
+  .fundraising-company-summary,
+  .fundraising-company-contact-grid,
+  .fundraising-company-stat-grid,
+  .fundraising-company-stat-grid.compact,
+  .retainer-period-row,
+  .accounting-form-row {
     grid-template-columns: 1fr;
+  }
+
+  .accounting-search,
+  .accounting-filters .select-filter {
+    max-width: none;
+    width: 100%;
   }
 
   .exportbar .primary-button,

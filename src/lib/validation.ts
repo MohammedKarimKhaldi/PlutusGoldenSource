@@ -2,7 +2,20 @@ import { z } from "zod";
 
 import { normalizeCompanyWebsites } from "./company-websites";
 import { isValidPersonEmail, normalizePersonCategories, normalizePersonEmails } from "./person-update";
-import { CAPACITY_STATUSES, ENRICHMENT_STATUSES, INVESTMENT_DEAL_STATUSES, INVESTMENT_STATUSES, OUTREACH_STAGES } from "./types";
+import {
+  ACCOUNTING_DIRECTIONS,
+  ACCOUNTING_DOCUMENT_STATUSES,
+  ACCOUNTING_DOCUMENT_TYPES,
+  ACCOUNTING_LEDGER_ENTRY_TYPES,
+  CAPACITY_STATUSES,
+  ENRICHMENT_STATUSES,
+  FUNDRAISING_CLIENT_STAGES,
+  FUNDRAISING_RETAINER_CADENCES,
+  FUNDRAISING_TARGET_STAGES,
+  INVESTMENT_DEAL_STATUSES,
+  INVESTMENT_STATUSES,
+  OUTREACH_STAGES,
+} from "./types";
 
 const personEmailsSchema = z
   .array(z.string().max(320))
@@ -55,6 +68,8 @@ export const personUpdateSchema = z.object({
   organizationId: z.string().uuid(),
   personId: z.string().uuid(),
   displayName: z.string().trim().min(1).max(240),
+  firstName: z.string().trim().max(120).nullable().optional(),
+  lastName: z.string().trim().max(120).nullable().optional(),
   emails: personEmailsSchema.optional().default([]),
   jobTitle: z.string().trim().max(240).nullable().optional(),
   linkedinUrl: z.string().trim().max(1000).nullable().optional(),
@@ -158,6 +173,38 @@ export const mergeCompaniesSchema = z
   });
 
 const nullableUuidSchema = z.string().uuid().nullable().optional();
+const moneyMinorSchema = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+const currencySchema = z
+  .string()
+  .trim()
+  .transform((value) => value.toUpperCase())
+  .pipe(z.string().regex(/^[A-Z]{3}$/, "Use a 3-letter ISO currency code."));
+const nullableTrimmedTextSchema = (max: number) =>
+  z
+    .string()
+    .trim()
+    .max(max)
+    .nullable()
+    .optional()
+    .transform((value) => value || null);
+
+const optionalMoneyMinorSchema = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable().optional();
+const optionalCurrencySchema = currencySchema.nullable().optional();
+const linkedCompanyCreateSchema = z.object({
+  name: z.string().trim().min(1).max(240),
+  websiteDomains: z.array(z.string().max(320)).max(20).transform(normalizeCompanyWebsites).optional().default([]),
+  description: nullableTrimmedTextSchema(5000),
+  country: nullableTrimmedTextSchema(120),
+  categories: z.array(z.string().trim().min(1).max(120)).max(30).optional().default([]),
+});
+const linkedPersonCreateSchema = z.object({
+  displayName: z.string().trim().min(1).max(240),
+  email: z.string().trim().max(320).nullable().optional(),
+  jobTitle: nullableTrimmedTextSchema(240),
+  linkedinUrl: nullableTrimmedTextSchema(1000),
+  country: nullableTrimmedTextSchema(120),
+  categories: personCategoriesSchema.optional().default([]),
+});
 
 export const companyEnrichmentUpdateSchema = z.object({
   organizationId: z.string().uuid(),
@@ -217,4 +264,204 @@ export const investmentDealStatusUpdateSchema = z.object({
   dealId: z.string().uuid(),
   status: z.enum(INVESTMENT_DEAL_STATUSES),
   note: z.string().trim().max(4000).nullable().optional(),
+});
+
+export const accountingDocumentSchema = z
+  .object({
+    organizationId: z.string().uuid(),
+    documentId: z.string().uuid().optional(),
+    companyId: nullableUuidSchema,
+    documentType: z.enum(ACCOUNTING_DOCUMENT_TYPES),
+    status: z.enum(ACCOUNTING_DOCUMENT_STATUSES).default("open"),
+    title: z.string().trim().min(1).max(240),
+    amountMinor: moneyMinorSchema,
+    currency: currencySchema,
+    issuedOn: z.string().date().nullable().optional(),
+    dueOn: z.string().date().nullable().optional(),
+    externalReference: nullableTrimmedTextSchema(240),
+    documentUrl: nullableTrimmedTextSchema(1000),
+    notes: nullableTrimmedTextSchema(4000),
+  })
+  .superRefine((value, ctx) => {
+    if ((value.documentType === "retainer" || value.documentType === "commission") && !value.companyId) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Retainers and commissions must be linked to a company.",
+        path: ["companyId"],
+      });
+    }
+  });
+
+export const accountingLedgerEntrySchema = z
+  .object({
+    organizationId: z.string().uuid(),
+    entryId: z.string().uuid().optional(),
+    documentId: nullableUuidSchema,
+    companyId: nullableUuidSchema,
+    entryType: z.enum(ACCOUNTING_LEDGER_ENTRY_TYPES),
+    direction: z.enum(ACCOUNTING_DIRECTIONS),
+    amountMinor: moneyMinorSchema,
+    currency: currencySchema,
+    occurredOn: z.string().date(),
+    externalReference: nullableTrimmedTextSchema(240),
+    documentUrl: nullableTrimmedTextSchema(1000),
+    notes: nullableTrimmedTextSchema(4000),
+  })
+  .superRefine((value, ctx) => {
+    if ((value.entryType === "retainer_payment" || value.entryType === "commission_payment") && !value.companyId) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Retainer and commission payments must be linked to a company.",
+        path: ["companyId"],
+      });
+    }
+
+    if ((value.entryType === "retainer_payment" || value.entryType === "commission_payment") && value.direction !== "incoming") {
+      ctx.addIssue({
+        code: "custom",
+        message: "Retainer and commission payments must be incoming.",
+        path: ["direction"],
+      });
+    }
+
+    if (value.entryType === "expense_payment" && value.direction !== "outgoing") {
+      ctx.addIssue({
+        code: "custom",
+        message: "Expense payments must be outgoing.",
+        path: ["direction"],
+      });
+    }
+  });
+
+export const accountingVoidSchema = z.object({
+  organizationId: z.string().uuid(),
+  entityType: z.enum(["document", "ledger_entry"]),
+  id: z.string().uuid(),
+  reason: z.string().trim().min(1).max(1000),
+});
+
+export const accountingDeleteSchema = z.object({
+  organizationId: z.string().uuid(),
+  entityType: z.enum(["document", "ledger_entry"]),
+  id: z.string().uuid(),
+  reason: z.string().trim().min(1).max(1000),
+});
+
+export const fundraisingClientSchema = z
+  .object({
+    organizationId: z.string().uuid(),
+    clientId: z.string().uuid().optional(),
+    companyId: nullableUuidSchema,
+    createCompany: linkedCompanyCreateSchema.optional(),
+    mandateName: z.string().trim().min(1).max(240),
+    stage: z.enum(FUNDRAISING_CLIENT_STAGES),
+    ownerId: nullableUuidSchema,
+    primaryContactPersonId: nullableUuidSchema,
+    createPrimaryContact: linkedPersonCreateSchema.optional(),
+    signedOn: z.string().date().nullable().optional(),
+    targetRaiseAmountMinor: optionalMoneyMinorSchema,
+    targetRaiseCurrency: optionalCurrencySchema,
+    retainerAmountMinor: optionalMoneyMinorSchema,
+    retainerCurrency: optionalCurrencySchema,
+    retainerCadence: z.enum(FUNDRAISING_RETAINER_CADENCES).nullable().optional(),
+    retainerSchedule: nullableTrimmedTextSchema(120),
+    retainerNextBillingDate: z.string().date().nullable().optional(),
+    materialsUrl: nullableTrimmedTextSchema(1000),
+    dataRoomUrl: nullableTrimmedTextSchema(1000),
+    notes: nullableTrimmedTextSchema(4000),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.companyId && !value.createCompany) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Choose an existing client company or create a new one.",
+        path: ["companyId"],
+      });
+    }
+
+    if ((value.targetRaiseAmountMinor == null) !== (value.targetRaiseCurrency == null)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Target raise amount and currency must be provided together.",
+        path: ["targetRaiseCurrency"],
+      });
+    }
+
+    if ((value.retainerAmountMinor == null) !== (value.retainerCurrency == null)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Retainer amount and currency must be provided together.",
+        path: ["retainerCurrency"],
+      });
+    }
+
+    if (value.retainerAmountMinor != null && !value.retainerCadence) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Choose a retainer cadence.",
+        path: ["retainerCadence"],
+      });
+    }
+
+    if (value.retainerAmountMinor != null && !value.retainerNextBillingDate) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Choose the next retainer billing date.",
+        path: ["retainerNextBillingDate"],
+      });
+    }
+  });
+
+export const fundraisingTargetSchema = z
+  .object({
+    organizationId: z.string().uuid(),
+    targetId: z.string().uuid().optional(),
+    clientId: z.string().uuid(),
+    investorCompanyId: nullableUuidSchema,
+    createInvestorCompany: linkedCompanyCreateSchema.optional(),
+    investorPersonId: nullableUuidSchema,
+    createInvestorPerson: linkedPersonCreateSchema.optional(),
+    investorName: z.string().trim().min(1).max(240),
+    investorEmail: nullableTrimmedTextSchema(320),
+    investorType: nullableTrimmedTextSchema(160),
+    ticketSizeMinMinor: optionalMoneyMinorSchema,
+    ticketSizeMaxMinor: optionalMoneyMinorSchema,
+    ticketSizeCurrency: optionalCurrencySchema,
+    stage: z.enum(FUNDRAISING_TARGET_STAGES),
+    ownerId: nullableUuidSchema,
+    lastContactedAt: z.string().datetime().nullable().optional(),
+    nextStep: nullableTrimmedTextSchema(500),
+    notes: nullableTrimmedTextSchema(4000),
+  })
+  .superRefine((value, ctx) => {
+    if (value.ticketSizeMaxMinor != null && value.ticketSizeMinMinor != null && value.ticketSizeMaxMinor < value.ticketSizeMinMinor) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Maximum ticket size must be greater than or equal to the minimum.",
+        path: ["ticketSizeMaxMinor"],
+      });
+    }
+
+    const hasTicketAmount = value.ticketSizeMinMinor != null || value.ticketSizeMaxMinor != null;
+    if (hasTicketAmount !== (value.ticketSizeCurrency != null)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Ticket size amount and currency must be provided together.",
+        path: ["ticketSizeCurrency"],
+      });
+    }
+
+    if (!value.investorName && !value.investorCompanyId && !value.investorPersonId && !value.createInvestorCompany && !value.createInvestorPerson) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Add an investor name or linked CRM record.",
+        path: ["investorName"],
+      });
+    }
+  });
+
+export const fundraisingDeleteSchema = z.object({
+  organizationId: z.string().uuid(),
+  entityType: z.enum(["client", "target"]),
+  id: z.string().uuid(),
 });

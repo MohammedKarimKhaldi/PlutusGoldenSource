@@ -1,5 +1,7 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
+
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
@@ -7,13 +9,21 @@ import { serializeCompanyWebsites } from "@/lib/company-websites";
 import { clearDashboardDataCache } from "@/lib/data";
 import { applyCompanyEnrichmentTags } from "@/lib/enrichment/company-tags";
 import { normalizeCompanyName, normalizePersonName } from "@/lib/import/normalization";
-import { buildPersonEmailUpdateRows, normalizePersonCategories } from "@/lib/person-update";
+import { buildPersonEmailUpdateRows, isValidPersonEmail, normalizePersonCategories } from "@/lib/person-update";
+import { buildRetainerForecastDates, RETAINER_CADENCE_LABELS } from "@/lib/retainer-forecast";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
-import type { InvestmentDealStatus } from "@/lib/types";
+import type { AccountingDocument, AccountingLedgerEntry, AccountingRole, FundraisingClient, FundraisingClientTarget, InvestmentDealStatus } from "@/lib/types";
 import {
   activitySchema,
+  accountingDeleteSchema,
+  accountingDocumentSchema,
+  accountingLedgerEntrySchema,
+  accountingVoidSchema,
   companyEnrichmentUpdateSchema,
   companyUpdateSchema,
+  fundraisingClientSchema,
+  fundraisingDeleteSchema,
+  fundraisingTargetSchema,
   investmentDealStatusUpdateSchema,
   highlightSchema,
   investmentDealSchema,
@@ -33,10 +43,36 @@ type ActionResult = {
   ok: boolean;
   message: string;
 };
+type AccountingDocumentActionResult = ActionResult & {
+  document?: AccountingDocument;
+};
+type AccountingLedgerEntryActionResult = ActionResult & {
+  entry?: AccountingLedgerEntry;
+};
+type AccountingVoidActionResult = ActionResult & {
+  document?: AccountingDocument;
+  entry?: AccountingLedgerEntry;
+};
+type AccountingDeleteActionResult = ActionResult & {
+  deletedId?: string;
+  entityType?: "document" | "ledger_entry";
+};
+type FundraisingClientActionResult = ActionResult & {
+  client?: FundraisingClient;
+};
+type FundraisingTargetActionResult = ActionResult & {
+  target?: FundraisingClientTarget;
+};
+type FundraisingDeleteActionResult = ActionResult & {
+  deletedId?: string;
+  entityType?: "client" | "target";
+};
 type PersonUpdateInput = {
   organizationId: string;
   personId: string;
   displayName: string;
+  firstName?: string | null;
+  lastName?: string | null;
   emails: string[];
   jobTitle?: string | null;
   linkedinUrl?: string | null;
@@ -100,6 +136,106 @@ type InvestmentDealStatusRow = {
   name: string;
   status: InvestmentDealStatus;
 };
+type AccountingMemberRow = {
+  role: AccountingRole;
+};
+type AccountingDocumentRow = {
+  id: string;
+  company_id: string | null;
+  fundraising_client_id: string | null;
+  retainer_period_date: string | null;
+  document_type: AccountingDocument["documentType"];
+  status: AccountingDocument["status"];
+  title: string;
+  amount_minor: number;
+  currency: string;
+  issued_on: string | null;
+  due_on: string | null;
+  external_reference: string | null;
+  document_url: string | null;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  voided_at: string | null;
+  voided_by: string | null;
+  void_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+type AccountingLedgerEntryRow = {
+  id: string;
+  document_id: string | null;
+  company_id: string | null;
+  entry_type: AccountingLedgerEntry["entryType"];
+  direction: AccountingLedgerEntry["direction"];
+  amount_minor: number;
+  currency: string;
+  occurred_on: string;
+  external_reference: string | null;
+  document_url: string | null;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  voided_at: string | null;
+  voided_by: string | null;
+  void_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+type AccountingLinkedDocumentRow = {
+  id: string;
+  company_id: string | null;
+  currency: string;
+  status: AccountingDocument["status"];
+  voided_at: string | null;
+};
+type OrganizationMemberRow = {
+  role: "owner" | "admin" | "member";
+};
+type FundraisingClientRow = {
+  id: string;
+  company_id: string;
+  mandate_name: string;
+  stage: FundraisingClient["stage"];
+  owner_id: string | null;
+  primary_contact_person_id: string | null;
+  signed_on: string | null;
+  target_raise_amount_minor: number | null;
+  target_raise_currency: string | null;
+  retainer_amount_minor: number | null;
+  retainer_currency: string | null;
+  retainer_cadence: FundraisingClient["retainerCadence"];
+  retainer_schedule: string | null;
+  retainer_next_billing_date: string | null;
+  materials_url: string | null;
+  data_room_url: string | null;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+type FundraisingClientTargetRow = {
+  id: string;
+  client_id: string;
+  investor_company_id: string | null;
+  investor_person_id: string | null;
+  investor_name: string;
+  investor_email: string | null;
+  investor_type: string | null;
+  ticket_size_min_minor: number | null;
+  ticket_size_max_minor: number | null;
+  ticket_size_currency: string | null;
+  stage: FundraisingClientTarget["stage"];
+  owner_id: string | null;
+  last_contacted_at: string | null;
+  next_step: string | null;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
 
 const WRITE_CHUNK_SIZE = 500;
 const PERSON_UPDATE_CONCURRENCY = 25;
@@ -115,6 +251,14 @@ const INVESTMENT_DEAL_STATUS_LABELS: Record<InvestmentDealStatus, string> = {
   closed: "Closed",
   passed: "Passed",
 };
+const ACCOUNTING_DOCUMENT_COLUMNS =
+  "id,company_id,fundraising_client_id,retainer_period_date,document_type,status,title,amount_minor,currency,issued_on,due_on,external_reference,document_url,notes,created_by,updated_by,voided_at,voided_by,void_reason,created_at,updated_at";
+const ACCOUNTING_LEDGER_COLUMNS =
+  "id,document_id,company_id,entry_type,direction,amount_minor,currency,occurred_on,external_reference,document_url,notes,created_by,updated_by,voided_at,voided_by,void_reason,created_at,updated_at";
+const FUNDRAISING_CLIENT_COLUMNS =
+  "id,company_id,mandate_name,stage,owner_id,primary_contact_person_id,signed_on,target_raise_amount_minor,target_raise_currency,retainer_amount_minor,retainer_currency,retainer_cadence,retainer_schedule,retainer_next_billing_date,materials_url,data_room_url,notes,created_by,updated_by,created_at,updated_at";
+const FUNDRAISING_TARGET_COLUMNS =
+  "id,client_id,investor_company_id,investor_person_id,investor_name,investor_email,investor_type,ticket_size_min_minor,ticket_size_max_minor,ticket_size_currency,stage,owner_id,last_contacted_at,next_step,notes,created_by,updated_by,created_at,updated_at";
 
 function unavailable(): ActionResult {
   return {
@@ -130,6 +274,105 @@ function sleep(ms: number) {
 function formatUnknownError(error: unknown) {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function mapAccountingDocument(row: AccountingDocumentRow): AccountingDocument {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    fundraisingClientId: row.fundraising_client_id ?? null,
+    retainerPeriodDate: row.retainer_period_date ?? null,
+    documentType: row.document_type,
+    status: row.status,
+    title: row.title,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency,
+    issuedOn: row.issued_on,
+    dueOn: row.due_on,
+    externalReference: row.external_reference,
+    documentUrl: row.document_url,
+    notes: row.notes,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+    voidedAt: row.voided_at,
+    voidedBy: row.voided_by,
+    voidReason: row.void_reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapAccountingLedgerEntry(row: AccountingLedgerEntryRow): AccountingLedgerEntry {
+  return {
+    id: row.id,
+    documentId: row.document_id,
+    companyId: row.company_id,
+    entryType: row.entry_type,
+    direction: row.direction,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency,
+    occurredOn: row.occurred_on,
+    externalReference: row.external_reference,
+    documentUrl: row.document_url,
+    notes: row.notes,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+    voidedAt: row.voided_at,
+    voidedBy: row.voided_by,
+    voidReason: row.void_reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapFundraisingClient(row: FundraisingClientRow): FundraisingClient {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    mandateName: row.mandate_name,
+    stage: row.stage,
+    ownerId: row.owner_id,
+    primaryContactPersonId: row.primary_contact_person_id,
+    signedOn: row.signed_on,
+    targetRaiseAmountMinor: row.target_raise_amount_minor == null ? null : Number(row.target_raise_amount_minor),
+    targetRaiseCurrency: row.target_raise_currency,
+    retainerAmountMinor: row.retainer_amount_minor == null ? null : Number(row.retainer_amount_minor),
+    retainerCurrency: row.retainer_currency,
+    retainerCadence: row.retainer_cadence ?? null,
+    retainerSchedule: row.retainer_schedule ?? null,
+    retainerNextBillingDate: row.retainer_next_billing_date ?? null,
+    materialsUrl: row.materials_url,
+    dataRoomUrl: row.data_room_url,
+    notes: row.notes,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapFundraisingTarget(row: FundraisingClientTargetRow): FundraisingClientTarget {
+  return {
+    id: row.id,
+    clientId: row.client_id,
+    investorCompanyId: row.investor_company_id,
+    investorPersonId: row.investor_person_id,
+    investorName: row.investor_name,
+    investorEmail: row.investor_email,
+    investorType: row.investor_type,
+    ticketSizeMinMinor: row.ticket_size_min_minor == null ? null : Number(row.ticket_size_min_minor),
+    ticketSizeMaxMinor: row.ticket_size_max_minor == null ? null : Number(row.ticket_size_max_minor),
+    ticketSizeCurrency: row.ticket_size_currency,
+    stage: row.stage,
+    ownerId: row.owner_id,
+    lastContactedAt: row.last_contacted_at,
+    nextStep: row.next_step,
+    notes: row.notes,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 async function createSupabaseWriteClient(): Promise<SupabaseWriteClient | null> {
@@ -163,9 +406,614 @@ async function revalidateDashboard() {
   revalidatePath("/companies/[id]", "page");
 }
 
+async function requireAccountingEditor(supabase: SupabaseServerClient, organizationId: string): Promise<{ ok: true; userId: string; role: AccountingRole } | { ok: false; result: ActionResult }> {
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    return { ok: false, result: { ok: false, message: "Sign in with a finance-enabled account before changing accounting data." } };
+  }
+
+  const { data, error } = await supabase
+    .from("accounting_members")
+    .select("role")
+    .eq("organization_id", organizationId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (error) return { ok: false, result: { ok: false, message: error.message } };
+
+  const role = (data as AccountingMemberRow | null)?.role;
+  if (role !== "editor" && role !== "admin") {
+    return { ok: false, result: { ok: false, message: "Your finance access is read-only." } };
+  }
+
+  return { ok: true, userId: user.id, role };
+}
+
+async function ensureAccountingCompany(supabase: SupabaseServerClient, organizationId: string, companyId: string | null | undefined) {
+  if (!companyId) return null;
+
+  const { data, error } = await supabase
+    .from("companies")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("id", companyId)
+    .maybeSingle();
+
+  if (error) return error.message;
+  if (!data) return "Could not find this company in the selected organization.";
+  return null;
+}
+
+async function insertAccountingAuditEvent({
+  supabase,
+  organizationId,
+  userId,
+  action,
+  entityType,
+  entityId,
+  beforeData,
+  afterData,
+}: {
+  supabase: SupabaseWriteClient;
+  organizationId: string;
+  userId: string;
+  action: "create" | "update" | "void" | "delete";
+  entityType: "document" | "ledger_entry";
+  entityId: string;
+  beforeData: unknown;
+  afterData: unknown;
+}) {
+  const { error } = await supabase.from("accounting_audit_events").insert({
+    organization_id: organizationId,
+    actor_user_id: userId,
+    action,
+    entity_type: entityType,
+    entity_id: entityId,
+    before_data: beforeData ?? null,
+    after_data: afterData ?? null,
+  });
+
+  return error;
+}
+
+async function requireOrgMember(supabase: SupabaseServerClient, organizationId: string): Promise<{ ok: true; userId: string } | { ok: false; result: ActionResult }> {
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    return { ok: false, result: { ok: false, message: "Sign in before changing fundraising client data." } };
+  }
+
+  const { data, error } = await supabase
+    .from("organization_members")
+    .select("role")
+    .eq("organization_id", organizationId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (error) return { ok: false, result: { ok: false, message: error.message } };
+  if (!(data as OrganizationMemberRow | null)?.role) {
+    return { ok: false, result: { ok: false, message: "Your account is not a member of this CRM organization." } };
+  }
+
+  return { ok: true, userId: user.id };
+}
+
+async function ensureFundraisingCompany(supabase: SupabaseServerClient, organizationId: string, companyId: string | null | undefined) {
+  if (!companyId) return null;
+
+  const { data, error } = await supabase
+    .from("companies")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("id", companyId)
+    .maybeSingle();
+
+  if (error) return error.message;
+  if (!data) return "Could not find this company in the selected organization.";
+  return null;
+}
+
+async function ensureFundraisingPerson(supabase: SupabaseServerClient, organizationId: string, personId: string | null | undefined) {
+  if (!personId) return null;
+
+  const { data, error } = await supabase
+    .from("people")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("id", personId)
+    .maybeSingle();
+
+  if (error) return error.message;
+  if (!data) return "Could not find this contact in the selected organization.";
+  return null;
+}
+
+async function createFundraisingCompany({
+  supabase,
+  organizationId,
+  userId,
+  company,
+  category,
+}: {
+  supabase: SupabaseServerClient;
+  organizationId: string;
+  userId: string;
+  company: { name: string; websiteDomains?: string[]; description?: string | null; country?: string | null; categories?: string[] };
+  category: string;
+}) {
+  const categories = uniqueNormalizedValues([...(company.categories ?? []), category]);
+  const { data, error } = await supabase
+    .from("companies")
+    .insert({
+      organization_id: organizationId,
+      source_key: `manual:${randomUUID()}`,
+      name: company.name,
+      normalized_name: normalizeCompanyName(company.name),
+      website_domain: serializeCompanyWebsites(company.websiteDomains ?? []),
+      description: company.description ?? null,
+      country: company.country ?? null,
+      categories,
+      status: "active",
+      source_quality: "review",
+      owner_id: userId,
+    })
+    .select("id")
+    .single();
+
+  if (error) return { companyId: null, message: error.message };
+  return { companyId: data.id as string, message: null };
+}
+
+async function createFundraisingPerson({
+  supabase,
+  organizationId,
+  companyId,
+  person,
+}: {
+  supabase: SupabaseServerClient;
+  organizationId: string;
+  companyId?: string | null;
+  person: { displayName: string; email?: string | null; jobTitle?: string | null; linkedinUrl?: string | null; country?: string | null; categories?: string[] };
+}) {
+  const email = person.email?.trim().toLowerCase() || null;
+  if (email && !isValidPersonEmail(email)) {
+    return { personId: null, message: "Enter a valid contact email." };
+  }
+
+  const { data, error } = await supabase
+    .from("people")
+    .insert({
+      organization_id: organizationId,
+      source_record_id: `manual:${randomUUID()}`,
+      display_name: person.displayName,
+      normalized_name: normalizePersonName(person.displayName),
+      first_name: null,
+      last_name: null,
+      linkedin_url: person.linkedinUrl ?? null,
+      job_title: person.jobTitle ?? null,
+      country: person.country ?? null,
+      categories: normalizePersonCategories(person.categories ?? []),
+      connection_strength: "Manual",
+    })
+    .select("id")
+    .single();
+
+  if (error) return { personId: null, message: error.message };
+
+  const personId = data.id as string;
+  if (email) {
+    const { error: emailError } = await supabase
+      .from("person_emails")
+      .insert(buildPersonEmailUpdateRows({ organizationId, personId, emails: [email], now: new Date() }));
+
+    if (emailError) return { personId: null, message: emailError.message };
+  }
+
+  if (companyId) {
+    const { error: linkError } = await supabase.from("company_people").upsert(
+      {
+        organization_id: organizationId,
+        company_id: companyId,
+        person_id: personId,
+        role_title: person.jobTitle ?? null,
+        relationship_strength: "Manual",
+        is_highlighted: false,
+      },
+      { onConflict: "organization_id,company_id,person_id" },
+    );
+
+    if (linkError) return { personId: null, message: linkError.message };
+  }
+
+  return { personId, message: null };
+}
+
+async function syncRetainerForecastDocuments({
+  supabase,
+  organizationId,
+  userId,
+  client,
+}: {
+  supabase: SupabaseWriteClient;
+  organizationId: string;
+  userId: string;
+  client: FundraisingClient;
+}) {
+  const { data: existingRows, error: existingError } = await supabase
+    .from("accounting_documents")
+    .select(ACCOUNTING_DOCUMENT_COLUMNS)
+    .eq("organization_id", organizationId)
+    .eq("fundraising_client_id", client.id);
+
+  if (existingError) return existingError.message;
+
+  const existingDocuments = ((existingRows ?? []) as AccountingDocumentRow[]).filter((document) => document.document_type === "retainer");
+  const hasRetainerSchedule = Boolean(
+    client.retainerAmountMinor != null &&
+    client.retainerCurrency &&
+    client.retainerCadence &&
+    client.retainerNextBillingDate,
+  );
+  const expectedDates = hasRetainerSchedule
+    ? buildRetainerForecastDates(client.retainerNextBillingDate as string, client.retainerCadence as NonNullable<FundraisingClient["retainerCadence"]>)
+    : [];
+  const expectedDateSet = new Set(expectedDates);
+  const now = new Date().toISOString();
+
+  for (const periodDate of expectedDates) {
+    const existing = existingDocuments.find((document) => document.retainer_period_date === periodDate);
+    if (existing && (existing.status !== "draft" || existing.voided_at)) continue;
+
+    const row = {
+      organization_id: organizationId,
+      company_id: client.companyId,
+      fundraising_client_id: client.id,
+      retainer_period_date: periodDate,
+      document_type: "retainer",
+      status: "draft",
+      title: `Retainer — ${client.mandateName} — ${periodDate}`,
+      amount_minor: client.retainerAmountMinor,
+      currency: client.retainerCurrency,
+      issued_on: periodDate,
+      due_on: periodDate,
+      external_reference: `fundraising-retainer:${client.id}:${periodDate}`,
+      document_url: null,
+      notes: client.retainerSchedule ?? RETAINER_CADENCE_LABELS[client.retainerCadence as NonNullable<FundraisingClient["retainerCadence"]>],
+      updated_by: userId,
+      updated_at: now,
+    };
+
+    if (existing) {
+      const { error } = await supabase
+        .from("accounting_documents")
+        .update(row)
+        .eq("organization_id", organizationId)
+        .eq("id", existing.id);
+      if (error) return error.message;
+    } else {
+      const { error } = await supabase.from("accounting_documents").insert({ ...row, created_by: userId });
+      if (error) return error.message;
+    }
+  }
+
+  for (const document of existingDocuments) {
+    if (!document.retainer_period_date || expectedDateSet.has(document.retainer_period_date)) continue;
+    if (document.status !== "draft" || document.voided_at) continue;
+    if (!document.external_reference?.startsWith(`fundraising-retainer:${client.id}:`)) continue;
+
+    const { error } = await supabase
+      .from("accounting_documents")
+      .update({
+        status: "void",
+        voided_at: now,
+        voided_by: userId,
+        void_reason: "Retainer forecast no longer matches the fundraising client schedule.",
+        updated_by: userId,
+        updated_at: now,
+      })
+      .eq("organization_id", organizationId)
+      .eq("id", document.id);
+    if (error) return error.message;
+  }
+
+  return null;
+}
+
 export async function refreshDashboardAction(): Promise<ActionResult> {
   await revalidateDashboard();
   return { ok: true, message: "Dashboard cache refreshed." };
+}
+
+export async function saveFundraisingClientAction(input: unknown): Promise<FundraisingClientActionResult> {
+  const parsed = fundraisingClientSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid fundraising client." };
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return unavailable();
+
+  const membership = await requireOrgMember(supabase, parsed.data.organizationId);
+  if (!membership.ok) return membership.result;
+
+  let companyId = parsed.data.companyId ?? null;
+  if (!companyId && parsed.data.createCompany) {
+    const created = await createFundraisingCompany({
+      supabase,
+      organizationId: parsed.data.organizationId,
+      userId: membership.userId,
+      company: parsed.data.createCompany,
+      category: "Fundraising Client",
+    });
+    if (!created.companyId) return { ok: false, message: created.message ?? "Could not create the client company." };
+    companyId = created.companyId;
+  }
+
+  const companyError = await ensureFundraisingCompany(supabase, parsed.data.organizationId, companyId);
+  if (companyError) return { ok: false, message: companyError };
+
+  let primaryContactPersonId = parsed.data.primaryContactPersonId ?? null;
+  if (!primaryContactPersonId && parsed.data.createPrimaryContact) {
+    const created = await createFundraisingPerson({
+      supabase,
+      organizationId: parsed.data.organizationId,
+      companyId,
+      person: parsed.data.createPrimaryContact,
+    });
+    if (!created.personId) return { ok: false, message: created.message ?? "Could not create the primary contact." };
+    primaryContactPersonId = created.personId;
+  }
+
+  const personError = await ensureFundraisingPerson(supabase, parsed.data.organizationId, primaryContactPersonId);
+  if (personError) return { ok: false, message: personError };
+
+  const row = {
+    organization_id: parsed.data.organizationId,
+    company_id: companyId,
+    mandate_name: parsed.data.mandateName,
+    stage: parsed.data.stage,
+    owner_id: parsed.data.ownerId ?? null,
+    primary_contact_person_id: primaryContactPersonId,
+    signed_on: parsed.data.signedOn ?? null,
+    target_raise_amount_minor: parsed.data.targetRaiseAmountMinor ?? null,
+    target_raise_currency: parsed.data.targetRaiseCurrency ?? null,
+    retainer_amount_minor: parsed.data.retainerAmountMinor ?? null,
+    retainer_currency: parsed.data.retainerCurrency ?? null,
+    retainer_cadence: parsed.data.retainerAmountMinor == null ? null : parsed.data.retainerCadence ?? null,
+    retainer_schedule: parsed.data.retainerAmountMinor == null
+      ? null
+      : parsed.data.retainerCadence
+        ? RETAINER_CADENCE_LABELS[parsed.data.retainerCadence]
+        : parsed.data.retainerSchedule ?? null,
+    retainer_next_billing_date: parsed.data.retainerAmountMinor == null ? null : parsed.data.retainerNextBillingDate ?? null,
+    materials_url: parsed.data.materialsUrl ?? null,
+    data_room_url: parsed.data.dataRoomUrl ?? null,
+    notes: parsed.data.notes ?? null,
+    updated_by: membership.userId,
+    updated_at: new Date().toISOString(),
+  };
+
+  const isNewClient = !parsed.data.clientId;
+
+  const query = isNewClient
+    ? supabase
+        .from("fundraising_clients")
+        .insert({ ...row, created_by: membership.userId })
+        .select(FUNDRAISING_CLIENT_COLUMNS)
+        .single()
+    : supabase
+        .from("fundraising_clients")
+        .update(row)
+        .eq("organization_id", parsed.data.organizationId)
+        .eq("id", parsed.data.clientId)
+        .select(FUNDRAISING_CLIENT_COLUMNS)
+        .maybeSingle();
+
+  const { data, error } = await query;
+  if (error) return { ok: false, message: error.message };
+  if (!data) return { ok: false, message: "Could not save this fundraising client." };
+
+  const client = mapFundraisingClient(data as FundraisingClientRow);
+  const accountingClient = createSupabaseAdminClient() ?? supabase;
+  const retainerSyncError = await syncRetainerForecastDocuments({
+    supabase: accountingClient,
+    organizationId: parsed.data.organizationId,
+    userId: membership.userId,
+    client,
+  });
+
+  await revalidateDashboard();
+  return {
+    ok: true,
+    message: retainerSyncError
+      ? `${isNewClient ? "Fundraising client created" : "Fundraising client saved"}, but retainer invoices could not be synced: ${retainerSyncError}`
+      : isNewClient ? "Fundraising client created." : "Fundraising client saved.",
+    client,
+  };
+}
+
+export async function saveFundraisingTargetAction(input: unknown): Promise<FundraisingTargetActionResult> {
+  const parsed = fundraisingTargetSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid investor target." };
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return unavailable();
+
+  const membership = await requireOrgMember(supabase, parsed.data.organizationId);
+  if (!membership.ok) return membership.result;
+
+  const { data: client, error: clientError } = await supabase
+    .from("fundraising_clients")
+    .select("id")
+    .eq("organization_id", parsed.data.organizationId)
+    .eq("id", parsed.data.clientId)
+    .maybeSingle();
+
+  if (clientError) return { ok: false, message: clientError.message };
+  if (!client) return { ok: false, message: "Could not find this fundraising client." };
+
+  let investorCompanyId = parsed.data.investorCompanyId ?? null;
+  if (!investorCompanyId && parsed.data.createInvestorCompany) {
+    const created = await createFundraisingCompany({
+      supabase,
+      organizationId: parsed.data.organizationId,
+      userId: membership.userId,
+      company: parsed.data.createInvestorCompany,
+      category: "Investor Target",
+    });
+    if (!created.companyId) return { ok: false, message: created.message ?? "Could not create the investor company." };
+    investorCompanyId = created.companyId;
+  }
+
+  const companyError = await ensureFundraisingCompany(supabase, parsed.data.organizationId, investorCompanyId);
+  if (companyError) return { ok: false, message: companyError };
+
+  let investorPersonId = parsed.data.investorPersonId ?? null;
+  if (!investorPersonId && parsed.data.createInvestorPerson) {
+    const created = await createFundraisingPerson({
+      supabase,
+      organizationId: parsed.data.organizationId,
+      companyId: investorCompanyId,
+      person: parsed.data.createInvestorPerson,
+    });
+    if (!created.personId) return { ok: false, message: created.message ?? "Could not create the investor contact." };
+    investorPersonId = created.personId;
+  }
+
+  const personError = await ensureFundraisingPerson(supabase, parsed.data.organizationId, investorPersonId);
+  if (personError) return { ok: false, message: personError };
+
+  const row = {
+    organization_id: parsed.data.organizationId,
+    client_id: parsed.data.clientId,
+    investor_company_id: investorCompanyId,
+    investor_person_id: investorPersonId,
+    investor_name: parsed.data.investorName,
+    investor_email: parsed.data.investorEmail ?? parsed.data.createInvestorPerson?.email ?? null,
+    investor_type: parsed.data.investorType ?? null,
+    ticket_size_min_minor: parsed.data.ticketSizeMinMinor ?? null,
+    ticket_size_max_minor: parsed.data.ticketSizeMaxMinor ?? null,
+    ticket_size_currency: parsed.data.ticketSizeCurrency ?? null,
+    stage: parsed.data.stage,
+    owner_id: parsed.data.ownerId ?? null,
+    last_contacted_at: parsed.data.lastContactedAt ?? null,
+    next_step: parsed.data.nextStep ?? null,
+    notes: parsed.data.notes ?? null,
+    updated_by: membership.userId,
+    updated_at: new Date().toISOString(),
+  };
+
+  const query = parsed.data.targetId
+    ? supabase
+        .from("fundraising_client_targets")
+        .update(row)
+        .eq("organization_id", parsed.data.organizationId)
+        .eq("id", parsed.data.targetId)
+        .select(FUNDRAISING_TARGET_COLUMNS)
+        .maybeSingle()
+    : supabase
+        .from("fundraising_client_targets")
+        .insert({ ...row, created_by: membership.userId })
+        .select(FUNDRAISING_TARGET_COLUMNS)
+        .single();
+
+  const { data, error } = await query;
+  if (error) return { ok: false, message: error.message };
+  if (!data) return { ok: false, message: "Could not save this investor target." };
+
+  await revalidateDashboard();
+  return {
+    ok: true,
+    message: parsed.data.targetId ? "Investor target saved." : "Investor target created.",
+    target: mapFundraisingTarget(data as FundraisingClientTargetRow),
+  };
+}
+
+export async function deleteFundraisingClientAction(input: unknown): Promise<FundraisingDeleteActionResult> {
+  const parsed = fundraisingDeleteSchema.safeParse({ ...(input as Record<string, unknown>), entityType: "client" });
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid fundraising client delete." };
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return unavailable();
+
+  const membership = await requireOrgMember(supabase, parsed.data.organizationId);
+  if (!membership.ok) return membership.result;
+
+  const { data: client, error: clientError } = await supabase
+    .from("fundraising_clients")
+    .select("id,company_id")
+    .eq("organization_id", parsed.data.organizationId)
+    .eq("id", parsed.data.id)
+    .maybeSingle();
+
+  if (clientError) return { ok: false, message: clientError.message };
+  if (!client) return { ok: false, message: "Could not find this fundraising client." };
+
+  const accountingClient = createSupabaseAdminClient();
+  if (!accountingClient) {
+    return {
+      ok: false,
+      message: "Cannot delete this client until server admin access can verify that no accounting records are linked.",
+    };
+  }
+  const [documentResult, ledgerResult] = await Promise.all([
+    accountingClient
+      .from("accounting_documents")
+      .select("id")
+      .eq("organization_id", parsed.data.organizationId)
+      .eq("company_id", client.company_id)
+      .limit(1),
+    accountingClient
+      .from("accounting_ledger_entries")
+      .select("id")
+      .eq("organization_id", parsed.data.organizationId)
+      .eq("company_id", client.company_id)
+      .limit(1),
+  ]);
+
+  const hasAccounting = (documentResult.data?.length ?? 0) > 0 || (ledgerResult.data?.length ?? 0) > 0;
+  if (hasAccounting) {
+    return {
+      ok: false,
+      message: "This client has accounting records. Pause or complete the mandate instead of deleting it.",
+    };
+  }
+
+  const { error } = await supabase
+    .from("fundraising_clients")
+    .delete()
+    .eq("organization_id", parsed.data.organizationId)
+    .eq("id", parsed.data.id);
+
+  if (error) return { ok: false, message: error.message };
+  await revalidateDashboard();
+  return { ok: true, message: "Fundraising client deleted.", deletedId: parsed.data.id, entityType: "client" };
+}
+
+export async function deleteFundraisingTargetAction(input: unknown): Promise<FundraisingDeleteActionResult> {
+  const parsed = fundraisingDeleteSchema.safeParse({ ...(input as Record<string, unknown>), entityType: "target" });
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid investor target delete." };
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return unavailable();
+
+  const membership = await requireOrgMember(supabase, parsed.data.organizationId);
+  if (!membership.ok) return membership.result;
+
+  const { error } = await supabase
+    .from("fundraising_client_targets")
+    .delete()
+    .eq("organization_id", parsed.data.organizationId)
+    .eq("id", parsed.data.id);
+
+  if (error) return { ok: false, message: error.message };
+  await revalidateDashboard();
+  return { ok: true, message: "Investor target deleted.", deletedId: parsed.data.id, entityType: "target" };
 }
 
 function chunks<T>(items: T[], size = WRITE_CHUNK_SIZE) {
@@ -354,6 +1202,8 @@ async function updatePeopleInSupabase(updates: PersonUpdateInput[]): Promise<Act
         source_record_id: existingPerson.source_record_id,
         display_name: update.displayName,
         normalized_name: normalizePersonName(update.displayName),
+        first_name: update.firstName ?? null,
+        last_name: update.lastName ?? null,
         ...(update.jobTitle !== undefined ? { job_title: update.jobTitle } : {}),
         ...(update.linkedinUrl !== undefined ? { linkedin_url: update.linkedinUrl } : {}),
         ...(update.phone !== undefined ? { phone_numbers: update.phone } : {}),
@@ -428,6 +1278,398 @@ export async function signOut() {
     await supabase.auth.signOut();
   }
   redirect("/login");
+}
+
+export async function saveAccountingDocumentAction(input: unknown): Promise<AccountingDocumentActionResult> {
+  const parsed = accountingDocumentSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid accounting document." };
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return unavailable();
+
+  const access = await requireAccountingEditor(supabase, parsed.data.organizationId);
+  if (!access.ok) return access.result;
+  if (parsed.data.status === "void") return { ok: false, message: "Use the void action for accounting documents." };
+
+  const companyError = await ensureAccountingCompany(supabase, parsed.data.organizationId, parsed.data.companyId);
+  if (companyError) return { ok: false, message: companyError };
+
+  const row = {
+    organization_id: parsed.data.organizationId,
+    company_id: parsed.data.companyId ?? null,
+    document_type: parsed.data.documentType,
+    status: parsed.data.status,
+    title: parsed.data.title,
+    amount_minor: parsed.data.amountMinor,
+    currency: parsed.data.currency,
+    issued_on: parsed.data.issuedOn ?? null,
+    due_on: parsed.data.dueOn ?? null,
+    external_reference: parsed.data.externalReference ?? null,
+    document_url: parsed.data.documentUrl ?? null,
+    notes: parsed.data.notes ?? null,
+    updated_by: access.userId,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (parsed.data.documentId) {
+    const { data: existing, error: existingError } = await supabase
+      .from("accounting_documents")
+      .select(ACCOUNTING_DOCUMENT_COLUMNS)
+      .eq("organization_id", parsed.data.organizationId)
+      .eq("id", parsed.data.documentId)
+      .maybeSingle();
+
+    if (existingError) return { ok: false, message: existingError.message };
+    if (!existing) return { ok: false, message: "Could not find this accounting document." };
+
+    const existingRow = existing as AccountingDocumentRow;
+    if (existingRow.status === "void" || existingRow.voided_at) return { ok: false, message: "Voided accounting documents cannot be edited." };
+
+    const { data: updated, error: updateError } = await supabase
+      .from("accounting_documents")
+      .update(row)
+      .eq("organization_id", parsed.data.organizationId)
+      .eq("id", parsed.data.documentId)
+      .select(ACCOUNTING_DOCUMENT_COLUMNS)
+      .single();
+
+    if (updateError) return { ok: false, message: updateError.message };
+
+    const auditError = await insertAccountingAuditEvent({
+      supabase,
+      organizationId: parsed.data.organizationId,
+      userId: access.userId,
+      action: "update",
+      entityType: "document",
+      entityId: parsed.data.documentId,
+      beforeData: existingRow,
+      afterData: updated,
+    });
+    if (auditError) return { ok: false, message: auditError.message };
+
+    await revalidateDashboard();
+    return { ok: true, message: "Accounting document saved.", document: mapAccountingDocument(updated as AccountingDocumentRow) };
+  }
+
+  const { data: inserted, error: insertError } = await supabase
+    .from("accounting_documents")
+    .insert({
+      ...row,
+      created_by: access.userId,
+    })
+    .select(ACCOUNTING_DOCUMENT_COLUMNS)
+    .single();
+
+  if (insertError) return { ok: false, message: insertError.message };
+
+  const insertedRow = inserted as AccountingDocumentRow;
+  const auditError = await insertAccountingAuditEvent({
+    supabase,
+    organizationId: parsed.data.organizationId,
+    userId: access.userId,
+    action: "create",
+    entityType: "document",
+    entityId: insertedRow.id,
+    beforeData: null,
+    afterData: insertedRow,
+  });
+  if (auditError) return { ok: false, message: auditError.message };
+
+  await revalidateDashboard();
+  return { ok: true, message: "Accounting document created.", document: mapAccountingDocument(insertedRow) };
+}
+
+export async function saveAccountingLedgerEntryAction(input: unknown): Promise<AccountingLedgerEntryActionResult> {
+  const parsed = accountingLedgerEntrySchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid accounting ledger entry." };
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return unavailable();
+
+  const access = await requireAccountingEditor(supabase, parsed.data.organizationId);
+  if (!access.ok) return access.result;
+
+  let linkedDocument: AccountingLinkedDocumentRow | null = null;
+  if (parsed.data.documentId) {
+    const { data, error } = await supabase
+      .from("accounting_documents")
+      .select("id,company_id,currency,status,voided_at")
+      .eq("organization_id", parsed.data.organizationId)
+      .eq("id", parsed.data.documentId)
+      .maybeSingle();
+
+    if (error) return { ok: false, message: error.message };
+    if (!data) return { ok: false, message: "Could not find the linked accounting document." };
+
+    linkedDocument = data as AccountingLinkedDocumentRow;
+    if (linkedDocument.status === "void" || linkedDocument.voided_at) return { ok: false, message: "Cannot link payments to a voided document." };
+    if (linkedDocument.currency !== parsed.data.currency) return { ok: false, message: "Ledger entry currency must match the linked document." };
+    if (linkedDocument.company_id && parsed.data.companyId && linkedDocument.company_id !== parsed.data.companyId) {
+      return { ok: false, message: "Ledger entry company must match the linked document." };
+    }
+  }
+
+  const companyId = parsed.data.companyId ?? linkedDocument?.company_id ?? null;
+  const companyError = await ensureAccountingCompany(supabase, parsed.data.organizationId, companyId);
+  if (companyError) return { ok: false, message: companyError };
+
+  const row = {
+    organization_id: parsed.data.organizationId,
+    document_id: parsed.data.documentId ?? null,
+    company_id: companyId,
+    entry_type: parsed.data.entryType,
+    direction: parsed.data.direction,
+    amount_minor: parsed.data.amountMinor,
+    currency: parsed.data.currency,
+    occurred_on: parsed.data.occurredOn,
+    external_reference: parsed.data.externalReference ?? null,
+    document_url: parsed.data.documentUrl ?? null,
+    notes: parsed.data.notes ?? null,
+    updated_by: access.userId,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (parsed.data.entryId) {
+    const { data: existing, error: existingError } = await supabase
+      .from("accounting_ledger_entries")
+      .select(ACCOUNTING_LEDGER_COLUMNS)
+      .eq("organization_id", parsed.data.organizationId)
+      .eq("id", parsed.data.entryId)
+      .maybeSingle();
+
+    if (existingError) return { ok: false, message: existingError.message };
+    if (!existing) return { ok: false, message: "Could not find this accounting ledger entry." };
+
+    const existingRow = existing as AccountingLedgerEntryRow;
+    if (existingRow.voided_at) return { ok: false, message: "Voided ledger entries cannot be edited." };
+
+    const { data: updated, error: updateError } = await supabase
+      .from("accounting_ledger_entries")
+      .update(row)
+      .eq("organization_id", parsed.data.organizationId)
+      .eq("id", parsed.data.entryId)
+      .select(ACCOUNTING_LEDGER_COLUMNS)
+      .single();
+
+    if (updateError) return { ok: false, message: updateError.message };
+
+    const auditError = await insertAccountingAuditEvent({
+      supabase,
+      organizationId: parsed.data.organizationId,
+      userId: access.userId,
+      action: "update",
+      entityType: "ledger_entry",
+      entityId: parsed.data.entryId,
+      beforeData: existingRow,
+      afterData: updated,
+    });
+    if (auditError) return { ok: false, message: auditError.message };
+
+    await revalidateDashboard();
+    return { ok: true, message: "Ledger entry saved.", entry: mapAccountingLedgerEntry(updated as AccountingLedgerEntryRow) };
+  }
+
+  const { data: inserted, error: insertError } = await supabase
+    .from("accounting_ledger_entries")
+    .insert({
+      ...row,
+      created_by: access.userId,
+    })
+    .select(ACCOUNTING_LEDGER_COLUMNS)
+    .single();
+
+  if (insertError) return { ok: false, message: insertError.message };
+
+  const insertedRow = inserted as AccountingLedgerEntryRow;
+  const auditError = await insertAccountingAuditEvent({
+    supabase,
+    organizationId: parsed.data.organizationId,
+    userId: access.userId,
+    action: "create",
+    entityType: "ledger_entry",
+    entityId: insertedRow.id,
+    beforeData: null,
+    afterData: insertedRow,
+  });
+  if (auditError) return { ok: false, message: auditError.message };
+
+  await revalidateDashboard();
+  return { ok: true, message: "Ledger entry created.", entry: mapAccountingLedgerEntry(insertedRow) };
+}
+
+export async function voidAccountingRecordAction(input: unknown): Promise<AccountingVoidActionResult> {
+  const parsed = accountingVoidSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid accounting void request." };
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return unavailable();
+
+  const access = await requireAccountingEditor(supabase, parsed.data.organizationId);
+  if (!access.ok) return access.result;
+
+  const now = new Date().toISOString();
+  if (parsed.data.entityType === "document") {
+    const { data: existing, error: existingError } = await supabase
+      .from("accounting_documents")
+      .select(ACCOUNTING_DOCUMENT_COLUMNS)
+      .eq("organization_id", parsed.data.organizationId)
+      .eq("id", parsed.data.id)
+      .maybeSingle();
+
+    if (existingError) return { ok: false, message: existingError.message };
+    if (!existing) return { ok: false, message: "Could not find this accounting document." };
+
+    const existingRow = existing as AccountingDocumentRow;
+    if (existingRow.status === "void" || existingRow.voided_at) return { ok: false, message: "This accounting document is already voided." };
+
+    const { data: updated, error: updateError } = await supabase
+      .from("accounting_documents")
+      .update({
+        status: "void",
+        voided_at: now,
+        voided_by: access.userId,
+        void_reason: parsed.data.reason,
+        updated_by: access.userId,
+        updated_at: now,
+      })
+      .eq("organization_id", parsed.data.organizationId)
+      .eq("id", parsed.data.id)
+      .select(ACCOUNTING_DOCUMENT_COLUMNS)
+      .single();
+
+    if (updateError) return { ok: false, message: updateError.message };
+
+    const auditError = await insertAccountingAuditEvent({
+      supabase,
+      organizationId: parsed.data.organizationId,
+      userId: access.userId,
+      action: "void",
+      entityType: "document",
+      entityId: parsed.data.id,
+      beforeData: existingRow,
+      afterData: updated,
+    });
+    if (auditError) return { ok: false, message: auditError.message };
+
+    await revalidateDashboard();
+    return { ok: true, message: "Accounting document voided.", document: mapAccountingDocument(updated as AccountingDocumentRow) };
+  }
+
+  const { data: existing, error: existingError } = await supabase
+    .from("accounting_ledger_entries")
+    .select(ACCOUNTING_LEDGER_COLUMNS)
+    .eq("organization_id", parsed.data.organizationId)
+    .eq("id", parsed.data.id)
+    .maybeSingle();
+
+  if (existingError) return { ok: false, message: existingError.message };
+  if (!existing) return { ok: false, message: "Could not find this accounting ledger entry." };
+
+  const existingRow = existing as AccountingLedgerEntryRow;
+  if (existingRow.voided_at) return { ok: false, message: "This ledger entry is already voided." };
+
+  const { data: updated, error: updateError } = await supabase
+    .from("accounting_ledger_entries")
+    .update({
+      voided_at: now,
+      voided_by: access.userId,
+      void_reason: parsed.data.reason,
+      updated_by: access.userId,
+      updated_at: now,
+    })
+    .eq("organization_id", parsed.data.organizationId)
+    .eq("id", parsed.data.id)
+    .select(ACCOUNTING_LEDGER_COLUMNS)
+    .single();
+
+  if (updateError) return { ok: false, message: updateError.message };
+
+  const auditError = await insertAccountingAuditEvent({
+    supabase,
+    organizationId: parsed.data.organizationId,
+    userId: access.userId,
+    action: "void",
+    entityType: "ledger_entry",
+    entityId: parsed.data.id,
+    beforeData: existingRow,
+    afterData: updated,
+  });
+  if (auditError) return { ok: false, message: auditError.message };
+
+  await revalidateDashboard();
+  return { ok: true, message: "Ledger entry voided.", entry: mapAccountingLedgerEntry(updated as AccountingLedgerEntryRow) };
+}
+
+export async function deleteAccountingRecordAction(input: unknown): Promise<AccountingDeleteActionResult> {
+  const parsed = accountingDeleteSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid accounting delete request." };
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return unavailable();
+
+  const access = await requireAccountingEditor(supabase, parsed.data.organizationId);
+  if (!access.ok) return access.result;
+
+  const deletedAt = new Date().toISOString();
+  if (parsed.data.entityType === "document") {
+    const { data: existing, error: existingError } = await supabase
+      .from("accounting_documents")
+      .select(ACCOUNTING_DOCUMENT_COLUMNS)
+      .eq("organization_id", parsed.data.organizationId)
+      .eq("id", parsed.data.id)
+      .maybeSingle();
+
+    if (existingError) return { ok: false, message: existingError.message };
+    if (!existing) return { ok: false, message: "Could not find this accounting document." };
+
+    const existingRow = existing as AccountingDocumentRow;
+    const auditError = await insertAccountingAuditEvent({
+      supabase,
+      organizationId: parsed.data.organizationId,
+      userId: access.userId,
+      action: "delete",
+      entityType: "document",
+      entityId: parsed.data.id,
+      beforeData: existingRow,
+      afterData: { deleted_at: deletedAt, delete_reason: parsed.data.reason },
+    });
+    if (auditError) return { ok: false, message: auditError.message };
+
+    const { error: deleteError } = await supabase.from("accounting_documents").delete().eq("organization_id", parsed.data.organizationId).eq("id", parsed.data.id).select("id").single();
+    if (deleteError) return { ok: false, message: deleteError.message };
+
+    await revalidateDashboard();
+    return { ok: true, message: "Accounting document deleted.", deletedId: parsed.data.id, entityType: "document" };
+  }
+
+  const { data: existing, error: existingError } = await supabase
+    .from("accounting_ledger_entries")
+    .select(ACCOUNTING_LEDGER_COLUMNS)
+    .eq("organization_id", parsed.data.organizationId)
+    .eq("id", parsed.data.id)
+    .maybeSingle();
+
+  if (existingError) return { ok: false, message: existingError.message };
+  if (!existing) return { ok: false, message: "Could not find this accounting ledger entry." };
+
+  const existingRow = existing as AccountingLedgerEntryRow;
+  const auditError = await insertAccountingAuditEvent({
+    supabase,
+    organizationId: parsed.data.organizationId,
+    userId: access.userId,
+    action: "delete",
+    entityType: "ledger_entry",
+    entityId: parsed.data.id,
+    beforeData: existingRow,
+    afterData: { deleted_at: deletedAt, delete_reason: parsed.data.reason },
+  });
+  if (auditError) return { ok: false, message: auditError.message };
+
+  const { error: deleteError } = await supabase.from("accounting_ledger_entries").delete().eq("organization_id", parsed.data.organizationId).eq("id", parsed.data.id).select("id").single();
+  if (deleteError) return { ok: false, message: deleteError.message };
+
+  await revalidateDashboard();
+  return { ok: true, message: "Ledger entry deleted.", deletedId: parsed.data.id, entityType: "ledger_entry" };
 }
 
 export async function updateCompanyAction(input: unknown): Promise<ActionResult> {
@@ -644,8 +1886,11 @@ export async function updateCompanyEnrichmentAction(input: unknown): Promise<Act
       companyId,
       enrichment: {
         status: enrichment.status,
+        summary: enrichment.summary ?? null,
         industry: enrichment.industry ?? null,
         subsector: enrichment.subsector ?? null,
+        companyType: enrichment.companyType ?? null,
+        keywords: enrichment.keywords,
       },
     });
   } catch (tagError) {

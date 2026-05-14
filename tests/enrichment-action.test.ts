@@ -90,8 +90,11 @@ describe("company enrichment action", () => {
       companyId,
       enrichment: {
         status: "completed",
+        summary: "Specialist biotech investor.",
         industry: "Biotech",
         subsector: "Therapeutics",
+        companyType: "Investor",
+        keywords: ["biotech"],
       },
     });
   });

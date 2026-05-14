@@ -1,8 +1,48 @@
 import type { createSupabaseAdminClient } from "@/lib/supabase/server";
 import type { CompanyEnrichment, Tag } from "@/lib/types";
+import { canonicalInvestorClassificationTag, investorClassificationTagNames } from "./investor-taxonomy";
 
 export const DEFAULT_COMPANY_TAG_COLOR = "#2563eb";
 const MAX_COMPANY_TAG_LENGTH = 80;
+const MAX_ENRICHMENT_TAGS = 8;
+const ALWAYS_SKIP_TAGS = new Set([
+  "business",
+  "company",
+  "organization",
+  "investor",
+  "investors",
+  "private",
+  "private company",
+  "privately held",
+  "privately held company",
+  "public company",
+  "listed company",
+  "operating company",
+  "commercial company",
+]);
+const BROAD_INVESTOR_TAGS = new Set(["finance", "financial services", "investment", "investments", "investment management"]);
+const TOP_LEVEL_INVESTOR_TAGS = new Set(["Private Equity", "Venture Capital", "Fund of Funds"]);
+const GENERIC_INVESTOR_TAGS = new Set(["Asset Manager", "Fund Manager", "Investment Fund", "Institutional Investor"]);
+const GEOGRAPHY_FOCUS_TAGS = new Set(["UK Focus", "Europe Focus", "US Focus", "North America Focus", "MENA Focus", "Asia Focus", "Global Focus"]);
+const GENERIC_KEYWORD_TAGS = new Set([
+  "app",
+  "application",
+  "customer",
+  "customers",
+  "digital",
+  "general",
+  "global",
+  "mobile",
+  "online",
+  "platform",
+  "private company",
+  "products",
+  "services",
+  "solution",
+  "solutions",
+  "technology",
+  "website",
+]);
 
 type SupabaseAdminClient = NonNullable<ReturnType<typeof createSupabaseAdminClient>>;
 type SupabaseQueryError = { message: string };
@@ -43,9 +83,64 @@ function uniqueCompanyTagNames(values: Array<string | null | undefined>) {
   return names;
 }
 
-export function companyEnrichmentTagNames(enrichment: Pick<CompanyEnrichment, "status" | "industry" | "subsector">) {
+function baseEnrichmentTagNames(values: Array<string | null | undefined>, hasInvestorTags: boolean) {
+  return values.filter((value) => {
+    const name = normalizeCompanyTagName(value);
+    const key = name.toLowerCase();
+    if (!name || ALWAYS_SKIP_TAGS.has(key)) return false;
+    if (hasInvestorTags && BROAD_INVESTOR_TAGS.has(key)) return false;
+    return !canonicalInvestorClassificationTag(name);
+  });
+}
+
+function titleCaseTagName(value: string) {
+  return value
+    .split(/\s+/)
+    .map((word) => {
+      if (/^[A-Z0-9&-]{2,}$/.test(word)) return word;
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join(" ");
+}
+
+function fallbackKeywordTagNames(values: Array<string | null | undefined>) {
+  return values
+    .map(normalizeCompanyTagName)
+    .filter((name) => {
+      const key = name.toLowerCase();
+      if (!name || ALWAYS_SKIP_TAGS.has(key) || GENERIC_KEYWORD_TAGS.has(key)) return false;
+      if (BROAD_INVESTOR_TAGS.has(key) || canonicalInvestorClassificationTag(name)) return false;
+      if (/[.!?]/.test(name)) return false;
+      return name.split(/\s+/).length <= 4;
+    })
+    .map(titleCaseTagName);
+}
+
+type EnrichmentForTags = Pick<CompanyEnrichment, "industry" | "subsector"> & Partial<Pick<CompanyEnrichment, "companyType" | "keywords" | "summary">>;
+
+function confidentInvestorTagNames(enrichment: EnrichmentForTags) {
+  const rawInvestorTags = investorClassificationTagNames([enrichment.industry, enrichment.subsector, enrichment.companyType, ...(enrichment.keywords ?? [])], MAX_ENRICHMENT_TAGS);
+  const evidenceTags = investorClassificationTagNames([enrichment.industry, enrichment.subsector, ...(enrichment.keywords ?? [])], MAX_ENRICHMENT_TAGS);
+  const nonGeographyEvidenceTags = evidenceTags.filter((tag) => !GEOGRAPHY_FOCUS_TAGS.has(tag));
+  const specificEvidenceTags = nonGeographyEvidenceTags.filter((tag) => !GENERIC_INVESTOR_TAGS.has(tag) && !TOP_LEVEL_INVESTOR_TAGS.has(tag));
+  const hasConfidentInvestorEvidence = specificEvidenceTags.length > 0 || nonGeographyEvidenceTags.length >= 2;
+
+  if (!hasConfidentInvestorEvidence) return [];
+  return rawInvestorTags.filter((tag) => !GEOGRAPHY_FOCUS_TAGS.has(tag) || nonGeographyEvidenceTags.length > 0);
+}
+
+function hasInvestorClaim(enrichment: EnrichmentForTags) {
+  return investorClassificationTagNames([enrichment.industry, enrichment.subsector, enrichment.companyType, ...(enrichment.keywords ?? [])], 1).length > 0;
+}
+
+export function companyEnrichmentTagNames(
+  enrichment: Pick<CompanyEnrichment, "status" | "industry" | "subsector"> & Partial<Pick<CompanyEnrichment, "companyType" | "keywords" | "summary">>,
+) {
   if (enrichment.status !== "completed") return [];
-  return uniqueCompanyTagNames([enrichment.industry, enrichment.subsector]);
+  const investorTags = confidentInvestorTagNames(enrichment);
+  const baseTags = baseEnrichmentTagNames([enrichment.industry, enrichment.subsector, enrichment.companyType], investorTags.length > 0 || hasInvestorClaim(enrichment));
+  const keywordTags = investorTags.length === 0 && baseTags.length === 0 ? fallbackKeywordTagNames(enrichment.keywords ?? []) : [];
+  return uniqueCompanyTagNames([...investorTags, ...baseTags, ...keywordTags]).slice(0, MAX_ENRICHMENT_TAGS);
 }
 
 export async function ensureCompanyTags({
@@ -127,7 +222,7 @@ export async function applyCompanyEnrichmentTags({
   supabase: SupabaseAdminClient;
   organizationId: string;
   companyId: string;
-  enrichment: Pick<CompanyEnrichment, "status" | "industry" | "subsector">;
+  enrichment: Pick<CompanyEnrichment, "status" | "industry" | "subsector"> & Partial<Pick<CompanyEnrichment, "companyType" | "keywords" | "summary">>;
 }) {
   const tagNames = companyEnrichmentTagNames(enrichment);
   const tags = await ensureCompanyTags({ supabase, organizationId, companyId, tagNames });

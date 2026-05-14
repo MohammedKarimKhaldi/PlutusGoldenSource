@@ -26,8 +26,11 @@ type CompanyRow = {
 };
 type ExistingEnrichmentRow = {
   status: "pending" | "completed" | "needs_review" | "failed";
+  summary: string | null;
   industry: string | null;
   subsector: string | null;
+  companyType: string | null;
+  keywords: string[];
 };
 
 function websiteDomains(value: string | null) {
@@ -62,13 +65,28 @@ export async function POST(request: Request) {
   if (!parsed.data.force) {
     const { data: existing, error: existingError } = await adminSupabase
       .from("company_enrichments")
-      .select("status,industry,subsector")
+      .select("status,summary,industry,subsector,company_type,keywords")
       .eq("organization_id", organizationId)
       .eq("company_id", parsed.data.companyId)
       .maybeSingle();
     if (existingError) return NextResponse.json({ error: existingError.message }, { status: 500 });
-    if (existing?.status === "completed") {
-      const existingEnrichment = existing as ExistingEnrichmentRow;
+    if (existing?.status === "completed" && typeof existing.summary === "string" && existing.summary.trim()) {
+      const existingRow = existing as {
+        status: ExistingEnrichmentRow["status"];
+        summary: string | null;
+        industry: string | null;
+        subsector: string | null;
+        company_type: string | null;
+        keywords: string[] | null;
+      };
+      const existingEnrichment: ExistingEnrichmentRow = {
+        status: existingRow.status,
+        summary: existingRow.summary,
+        industry: existingRow.industry,
+        subsector: existingRow.subsector,
+        companyType: existingRow.company_type,
+        keywords: existingRow.keywords ?? [],
+      };
       const tagNames = companyEnrichmentTagNames(existingEnrichment);
       if (!parsed.data.persist) return NextResponse.json({ skipped: true, status: "completed", tagNames });
 
